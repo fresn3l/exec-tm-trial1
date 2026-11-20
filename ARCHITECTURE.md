@@ -1,34 +1,48 @@
-# ExecFn — Architecture & Build Plan
+# ExecFn — Architecture & Build Plan (v2)
 
 Native macOS task, planning, and calendar app for people with ADHD / executive-function difficulties.
 Single user for now; built so it can go public after testing.
 
-> Research basis: `docs/RESEARCH.md` (ADHD & executive function pain points → features). Every design rule below traces back to it.
+- **Research basis:** `Research.md` (repo root). ADHD and executive-function pain points → features.
+- **Decisions:** `DECISIONS.md`. Every behavior rule is referenced here by ID (D-xx). Code follows only Accepted decisions.
+
+**Changes from v1:**
+- Domain/persistence split
+- Local-only activity log
+- Carried-over row instead of silent rollover
+- Rollover and the Today cap moved into Phase 2
+- Phase 4 split into 4a/4b
+- Calendar mirror cut
+- Routines added
+- If-then cues
+- Presence logging to decide Phase 7
+- Phase 0 spike
+- Explicit not-in-v1 list
 
 ---
 
-## 0. Assumptions & open decisions
+## 0. Assumptions
 
-| # | Decision | Assumed for now | Impact if different |
-|---|----------|-----------------|---------------------|
-| 1 | iPhone / Apple Watch available? | Yes, iOS ships in Phase 7 | If iOS matters sooner, move Phase 7 up. iPhone is the only path to Live Activities (Mac apps can't show them; macOS shows the iPhone's Live Activities in the menu bar). |
-| 2 | Standalone app or module of a larger life app? | Standalone, but core logic lives in a local Swift package (`EFCore`) | If it becomes a module, `EFCore` drops into the larger app unchanged. |
-| 3 | Swift / SwiftUI experience | Unknown | Affects pacing only. |
-| 4 | Apple Developer Program (paid) | Not required until Phase 7 | Needed for iCloud/CloudKit sync and public distribution. |
+| # | Assumption | Notes |
+|---|------------|-------|
+| A-1 | iPhone (and maybe Watch) exist; iOS ships in Phase 7 | **Mac-only until Phase 7 is a weak test if failures happen away from the desk.** Presence logging (D-24) measures this; the result decides whether Phase 7 moves up. |
+| A-2 | Standalone app; core and persistence are local Swift packages | Packages drop into a larger app unchanged (Q-3). |
+| A-3 | Paid Apple Developer Program not needed before Phase 7 | Needed for iCloud/CloudKit and distribution. |
+| A-4 | Calendar access may be denied | App must still work fully as a task manager (D-22). |
 
 ---
 
 ## 1. Design principles (from the research)
 
-1. **Point of performance.** Help appears when and where the task happens. The user must not have to remember to open the app → menu bar, hotkey, notifications, widgets.
-2. **Externalize time.** Countdowns, a "now" line, estimate-vs-actual learning. Never rely on an internal clock.
-3. **One thing at a time.** The default view is one task. Backlog hidden. Today capped.
-4. **Shrink the start.** First physical step, micro-step breakdown, "just 5 minutes".
-5. **Forgive, never punish.** No overdue state, no breakable streaks, no red counts. Coming back after a bad week is painless.
-6. **Respect attention.** All notifications go through one budgeted planner, are actionable, escalate, and vary their wording.
-7. **Near-zero upkeep.** Only a title is required. Rollover is automatic. No mandatory daily planning ritual.
-8. **Negotiate, don't enforce.** The app proposes; the user confirms. It never silently rewrites the plan.
-9. **Measure n=1.** Log every interaction, so features are judged on real data, not vibes.
+1. **Point of performance.** Help appears when and where the task happens → menu bar, hotkey, notifications, widgets.
+2. **Externalize time.** Countdowns, a "now" line, estimate-vs-actual learning.
+3. **One thing at a time.** The default view is one task (D-08). Today is capped (D-07). Backlog is hidden.
+4. **Shrink the start.** First physical step, micro-steps, "just 5 minutes".
+5. **Forgive, never punish.** No overdue state, no streaks, no red counts. Coming back is painless (D-06, D-15, D-18).
+6. **Respect attention.** One budgeted notification planner; notifications are actionable, escalate, and rotate their wording.
+7. **Near-zero upkeep.** Only a title is required. Rollover is automatic but visible. No mandatory rituals.
+8. **Negotiate, don't enforce.** The app proposes; the user decides. Nothing is rewritten silently.
+9. **Measure n=1.** Log interactions and presence so priorities come from data.
 
 ---
 
@@ -36,19 +50,20 @@ Single user for now; built so it can go public after testing.
 
 | Layer | Choice | Notes |
 |-------|--------|-------|
-| Language / UI | Swift 6, SwiftUI (+ thin AppKit bridges) | Multiplatform Xcode project: macOS target now, iOS later |
-| Min OS | macOS 26 (Tahoe) | Required for the Foundation Models framework. Current release is macOS 27. |
-| Persistence | SwiftData | Store in an App Group container, shared by app, widgets, and intents |
-| Calendars | EventKit | Read live. Never copy events into SwiftData. |
-| Notifications | UserNotifications | Categories with actions; time-sensitive interruption level for transitions |
-| AI | Foundation Models (on-device) | Behind a protocol. On-device, free, offline. Swappable for bigger models later. |
-| System surfaces | MenuBarExtra, WidgetKit, App Intents, Focus filters, Controls | See §5 |
-| Hotkey | [`sindresorhus/KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) | Sandbox-safe global shortcut |
+| Language / UI | Swift 6 (strict concurrency), SwiftUI + thin AppKit bridges | Multiplatform Xcode project; macOS target now, iOS later |
+| Min OS | macOS 26 (Tahoe) | Required for Foundation Models. Current release: macOS 27. |
+| Domain | `EFCore` package: structs/enums only, `Sendable` | D-01 |
+| Persistence | `EFPersistence` package: SwiftData `@Model` + mappers + repository | D-01 |
+| Stores | **Main store** (synced later) + **Activity store** (local-only, `cloudKitDatabase: .none`) | Both in the App Group container (D-02) |
+| Settings | `PlannerSettings` (`Codable`) in App Group `UserDefaults` | D-04 |
+| Calendars | EventKit, read live; events never copied into SwiftData | Full access required to read |
+| Notifications | UserNotifications | Actionable categories; time-sensitive level for transitions |
+| AI | Foundation Models (on-device) behind `IntelligenceService` | Phase 6; manual fallback always |
+| System surfaces | Menu bar item, NSPanel capture, WidgetKit, App Intents, Focus filters, Controls | §5 |
+| Hotkey | [`sindresorhus/KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) | Only third-party dependency |
 | Launch at login | `SMAppService.mainApp` | |
-| Tests | Swift Testing (`@Test`) | Core logic is pure functions → fully unit-testable |
-| Sync (later) | SwiftData + CloudKit | Deferred. The schema is CloudKit-compatible from day one (§4.3). |
-
-**Third-party dependencies:** one (KeyboardShortcuts). Everything else is first-party.
+| Tests | Swift Testing (`@Test`) | `EFCore` is pure → unit-tested without SwiftData |
+| Sync (Phase 7) | SwiftData + CloudKit (main store only) | Schema is CloudKit-compatible from day one |
 
 ---
 
@@ -57,211 +72,291 @@ Single user for now; built so it can go public after testing.
 ```
 ExecFn/
 ├─ ARCHITECTURE.md
-├─ docs/
-│  └─ RESEARCH.md
+├─ DECISIONS.md
+├─ Research.md
 ├─ Packages/
-│  └─ EFCore/                      # local Swift package — NO UI, NO system frameworks except Foundation/SwiftData
-│     ├─ Package.swift
-│     ├─ Sources/EFCore/
-│     │  ├─ Models/                # @Model types + VersionedSchema
-│     │  ├─ Planner/               # today cap, rollover, back-planning, pick-for-me
-│     │  ├─ Estimator/             # estimate vs actual → personal multiplier
-│     │  ├─ NotificationPlanner/   # budgeted, escalating schedule (pure function)
-│     │  ├─ ActivityLog/           # append-only event logging + metrics queries
-│     │  └─ Support/               # Clock protocol, DayBoundary, ID types
-│     └─ Tests/EFCoreTests/
-├─ ExecFn/                         # macOS app target
-│  ├─ App/                         # @main, scenes, AppState, dependency container
-│  ├─ Services/                    # protocol + live implementation per system framework
-│  │  ├─ CalendarService.swift     # EventKit
-│  │  ├─ NotificationService.swift # UserNotifications
-│  │  ├─ IntelligenceService.swift # Foundation Models
-│  │  └─ HotkeyService.swift       # KeyboardShortcuts
+│  ├─ EFCore/                        # pure domain — imports Foundation only
+│  │  ├─ Sources/EFCore/
+│  │  │  ├─ Domain/                  # TaskSnapshot, BlockSnapshot, SessionSnapshot, RoutineTemplate,
+│  │  │  │                           # DayPlanSnapshot, EventSnapshot, EventAnnotation, IfThenPlan, PlanDay
+│  │  │  ├─ Settings/                # PlannerSettings (+ defaults)
+│  │  │  ├─ Time/                    # Clock protocol, DayBoundary, PlanDay math
+│  │  │  ├─ Rollover/                # D-05, D-06, D-20 instance spawn/expiry
+│  │  │  ├─ Now/                     # D-08 selection
+│  │  │  ├─ Today/                   # D-07 cap, D-16 energy mapping
+│  │  │  ├─ Calendar/                # free slots, D-09/D-10 busy rules, D-11 proposals, D-12 missed blocks
+│  │  │  ├─ Sessions/                # D-14 check-ins, auto-end
+│  │  │  ├─ Recovery/                # D-15 fresh start + undo snapshot, D-18 comeback detection
+│  │  │  ├─ Estimator/               # multiplier from clean sessions
+│  │  │  ├─ Notifications/           # NotificationPlanner (pure)
+│  │  │  └─ Metrics/                 # Review metrics from activity events
+│  │  └─ Tests/EFCoreTests/
+│  └─ EFPersistence/                 # SwiftData — no UI
+│     ├─ Sources/EFPersistence/
+│     │  ├─ Models/                  # @Model classes + VersionedSchema + MigrationPlan
+│     │  ├─ ActivityStore/           # local-only container, writer, CSV/JSONL export
+│     │  ├─ Mapping/                 # @Model ⇄ snapshot
+│     │  └─ Repository/              # commands: load snapshots → EFCore → apply changes
+│     └─ Tests/EFPersistenceTests/
+├─ ExecFn/                           # macOS app target
+│  ├─ App/                           # @main, scenes, AppState, dependency container
+│  ├─ Services/
+│  │  ├─ CalendarService.swift       # EventKit → EventSnapshot; change debounce
+│  │  ├─ NotificationService.swift   # applies planner diff; routes actions
+│  │  ├─ PresenceService.swift       # wake/sleep, lock/unlock, idle → activity log (D-24)
+│  │  ├─ CueService.swift            # wake / focus / event-end cues (D-19)
+│  │  ├─ IntelligenceService.swift   # Foundation Models (Phase 6)
+│  │  └─ HotkeyService.swift
 │  ├─ Features/
-│  │  ├─ Now/                      # one task + next, start button, timer
-│  │  ├─ Inbox/
+│  │  ├─ Now/                        # Now + Next, Start, pin
+│  │  ├─ Today/                      # musts, "From yesterday" row, energy check-in
+│  │  ├─ Inbox/                      # derived list (D-03)
 │  │  ├─ Buckets/
-│  │  ├─ Calendar/                 # Day, Week, Month, unscheduled sidebar
-│  │  ├─ Capture/                  # floating NSPanel quick-capture
-│  │  ├─ MenuBar/                  # MenuBarExtra (.window style)
-│  │  ├─ FocusTimer/               # floating always-on-top mini timer
-│  │  ├─ DayPlan/                  # ideal / minimum / pause, energy check-in
-│  │  ├─ Review/                   # weekly review + personal metrics
+│  │  ├─ Routines/
+│  │  ├─ Calendar/                   # Day (Phase 1–3), Week & Month (Phase 4b)
+│  │  ├─ Capture/                    # NSPanel quick capture
+│  │  ├─ MenuBar/                    # MenuBarExtra or NSStatusItem (decided by Phase 0 spike)
+│  │  ├─ FocusTimer/                 # floating timer + check-ins
+│  │  ├─ Recovery/                   # Fresh start, Welcome back
+│  │  ├─ Review/                     # weekly review + metrics
 │  │  └─ Settings/
-│  ├─ Copy/
-│  │  └─ Localizable.xcstrings     # ALL user-facing text in one place (tone review)
+│  ├─ Copy/Localizable.xcstrings     # ALL user-facing text (tone review)
 │  ├─ ExecFn.entitlements
 │  └─ Info.plist
-├─ ExecFnWidgets/                  # WidgetKit extension (Now/Next, Today) + Controls
-└─ ExecFnIntents/                  # App Intents (if split from the app target)
+├─ ExecFnWidgets/                    # Phase 5
+└─ Spikes/MenuBarCountdown/          # Phase 0, throwaway
 ```
 
-**Rule:** `EFCore` never imports SwiftUI, EventKit, UserNotifications, or FoundationModels. Services adapt those frameworks to plain `EFCore` types. That keeps the core testable and portable to iOS.
+**Dependency rule:** `EFCore` ← `EFPersistence` ← App/Extensions. `EFCore` never imports SwiftUI, SwiftData, EventKit, UserNotifications, or FoundationModels.
 
 ---
 
-## 4. Data model
+## 4. Data
 
-### 4.1 Entities (SwiftData)
+### 4.1 Domain types (`EFCore`)
 
 ```swift
-// Sketch — field-level intent, not final code.
+import Foundation
 
-@Model final class TaskItem {
-    var id: UUID = UUID()
-    var title: String = ""                 // ONLY required user input
-    var firstStep: String?                 // "first physical step"
-    var notes: String?
-    var bucket: Bucket?
-    var status: TaskStatus = .inbox        // inbox | active | done | dropped  (NO overdue)
-    var estimateMinutes: Int?
-    var energy: Energy?                    // low | high
-    var dueDate: Date?
-    var ifThenTrigger: String?             // "When ___, I will ___"
-    var isTodayMust: Bool = false
-    var createdAt: Date = Date()
-    var completedAt: Date?
-    var rolloverCount: Int = 0             // internal only — drives resurfacing, never shown as a count
-    @Relationship(deleteRule: .cascade) var subtasks: [Subtask]? = []
-    @Relationship(deleteRule: .cascade) var blocks: [TimeBlock]? = []
-    @Relationship(deleteRule: .cascade) var sessions: [WorkSession]? = []
+public struct PlanDay: Hashable, Comparable, Codable, Sendable {   // calendar day under DayBoundary
+    public let year: Int, month: Int, day: Int
+    public static func < (a: Self, b: Self) -> Bool { (a.year, a.month, a.day) < (b.year, b.month, b.day) }
 }
 
-@Model final class Subtask {
-    var id: UUID = UUID()
-    var title: String = ""
-    var order: Int = 0
-    var isDone: Bool = false
-    var task: TaskItem?
+public enum TaskStatus: String, Codable, Sendable { case open, done, dropped }          // D-03
+public enum DropReason: String, Codable, Sendable { case user, routineExpired }          // D-20
+public enum TaskEnergy: String, Codable, Sendable { case low, high }                     // D-16
+public enum DayEnergy:  String, Codable, Sendable { case low, normal, high }             // D-16
+public enum DayMode:    String, Codable, Sendable { case ideal, minimum, pause }
+
+public struct EventRef: Hashable, Codable, Sendable {                // D-17: stable-ish key
+    public var externalID: String          // calendarItemExternalIdentifier
+    public var occurrenceStart: Date       // disambiguates recurring occurrences
 }
 
-@Model final class Bucket {
-    var id: UUID = UUID()
-    var name: String = ""
-    var colorHex: String = "#8E8E93"
-    var order: Int = 0
-    var focusFilterID: String?             // links a Focus mode → bucket
-    var tasks: [TaskItem]? = []
+public enum Cue: Hashable, Codable, Sendable {                        // D-19
+    case atTime(Date)
+    case afterEvent(EventRef)
+    case onMacWake
+    case focusChanged(String)
 }
 
-@Model final class TimeBlock {             // a task placed on the calendar
-    var id: UUID = UUID()
-    var start: Date = Date()
-    var end: Date = Date()
-    var ekEventID: String?                 // set only if mirrored to Apple Calendar (Phase 5+)
-    var task: TaskItem?
+public struct IfThenPlan: Hashable, Codable, Sendable {
+    public var text: String                // the plan itself (evidence-based part)
+    public var cue: Cue?                   // optional external nudge
 }
 
-@Model final class WorkSession {           // actual time spent → estimator
-    var id: UUID = UUID()
-    var start: Date = Date()
-    var end: Date?
-    var endedBy: SessionEnd?               // user | autoCapped | appQuit
-    var task: TaskItem?
+public struct TaskSnapshot: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var title: String               // ONLY required input
+    public var firstStep: String?
+    public var notes: String?
+    public var bucketID: UUID?
+    public var status: TaskStatus
+    public var dropReason: DropReason?
+    public var estimateMinutes: Int?
+    public var energy: TaskEnergy?
+    public var dueDate: Date?
+    public var ifThen: IfThenPlan?
+    public var isTodayMust: Bool
+    public var todayOrder: Int?
+    public var isMinimum: Bool             // shows on minimum days
+    public var isSomeday: Bool             // D-15
+    public var carriedFrom: PlanDay?       // D-06
+    public var rolloverCount: Int          // internal only
+    public var routineID: UUID?            // D-20
+    public var routineDay: PlanDay?
+    public var createdAt: Date
+    public var completedAt: Date?
+    public var lastTouchedAt: Date
 }
 
-@Model final class DayPlan {
-    var id: UUID = UUID()
-    var day: Date = Date()                 // normalized via DayBoundary, not midnight
-    var mode: DayMode = .ideal             // ideal | minimum | pause
-    var energyCheckIn: Int?                // 1–5, optional
+public enum BlockResolution: String, Codable, Sendable { case rescheduled, unscheduled, didIt }   // D-12
+public struct BlockSnapshot: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var taskID: UUID
+    public var start: Date
+    public var end: Date
+    public var resolution: BlockResolution?
 }
 
-@Model final class ActivityEvent {         // append-only log
-    var id: UUID = UUID()
-    var at: Date = Date()
-    var kind: ActivityKind = .taskCreated
-    var taskID: UUID?
-    var payload: Data?                     // small JSON blob (e.g., notification id, action taken)
+public enum SessionKind: String, Codable, Sendable { case timed, unverified }           // D-12
+public enum SessionEnd:  String, Codable, Sendable { case user, autoEnded, appQuit }     // D-14
+public struct SessionSnapshot: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var taskID: UUID
+    public var start: Date
+    public var end: Date?
+    public var kind: SessionKind
+    public var endedBy: SessionEnd?
+    public var isEstimatorEligible: Bool { kind == .timed && endedBy == .user && end != nil }
+}
+
+public enum RoutineSchedule: Hashable, Codable, Sendable {             // D-20
+    case daily, weekdays
+    case weekly(Set<Int>)                  // 1 = Sunday … 7 = Saturday (Calendar.weekday)
+    case everyNDays(Int, anchor: PlanDay)
+}
+public struct RoutineTemplate: Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var title: String
+    public var schedule: RoutineSchedule
+    public var timeOfDayMinutes: Int?      // minutes after midnight
+    public var estimateMinutes: Int?
+    public var checklist: [String]
+    public var bucketID: UUID?
+    public var energy: TaskEnergy?
+    public var isActive: Bool
+}
+
+public struct DayPlanSnapshot: Hashable, Sendable {
+    public var day: PlanDay
+    public var mode: DayMode
+    public var energy: DayEnergy?
+}
+
+public enum EventAvailability: String, Sendable { case busy, free, tentative, unavailable, notSupported }
+public struct EventSnapshot: Hashable, Sendable {                      // built by CalendarService
+    public var ref: EventRef
+    public var calendarID: String
+    public var title: String
+    public var start: Date
+    public var end: Date
+    public var isAllDay: Bool
+    public var availability: EventAvailability
+    public var hasLocation: Bool
+}
+
+public struct EventAnnotation: Hashable, Codable, Sendable {           // D-17
+    public var ref: EventRef
+    public var travelMinutes: Int?
+    public var transitionAlerts: Bool
 }
 ```
 
-### 4.2 Not stored
+**Derived, never stored:** Inbox membership (D-03), Today list, Now/Next (D-08), free slots, missed blocks, estimator multiplier, metrics.
 
-- **Calendar events.** Always read from EventKit for the visible date range.
-- **Derived values** (multiplier, today list, pick-for-me score). Computed on demand by `EFCore`.
+**Not stored at all:** calendar events (read live from EventKit).
 
-### 4.3 CloudKit-compatibility rules (apply now, sync later)
+### 4.2 Persistence (`EFPersistence`)
 
-- Every property optional or defaulted.
-- No `@Attribute(.unique)`.
-- All relationships optional.
-- `VersionedSchema` + `SchemaMigrationPlan` from v1.
-- The app owns migrations; widgets and intents only read (an extension must never drive a migration).
+- `@Model` classes mirror the snapshots (`TaskModel`, `BlockModel`, `SessionModel`, `SubtaskModel`, `BucketModel`, `RoutineModel`, `DayPlanModel`, `EventAnnotationModel`), with relationships where useful.
+- **CloudKit rules (main store, from v1 of the schema):** every property optional or defaulted; no `@Attribute(.unique)`; all relationships optional; `VersionedSchema` + `SchemaMigrationPlan`; the app owns migrations, and extensions only read.
+- **Activity store:** separate `ModelContainer`, `cloudKitDatabase: .none`. `ActivityEventModel { at, kind, taskID?, payload: Data? }`. Export to CSV/JSONL.
 
-### 4.4 Data-quality flags (built in)
+### 4.3 Activity events
 
-- **Runaway sessions:** a timer left running. Auto-cap at `max(estimate × 3, 120 min)`; mark `endedBy = .autoCapped`; exclude from estimator stats.
-- **Estimator sample size:** don't apply a multiplier until ≥5 clean sessions exist in the bucket.
-- **Day boundary:** the "day" starts at a user-set hour (default **4:00 AM**, not midnight; most adults with ADHD run on a delayed sleep cycle). All rollover and "today" logic uses `DayBoundary`, never `Calendar.startOfDay`.
-- **Time-dependent logic** takes an injected `Clock`/`Calendar`, so DST, sleep/wake and midnight cases are testable.
+```
+taskCreated(source: hotkey|app|intent|widget), taskEdited, taskCompleted, taskDropped(reason),
+mustSet, mustCleared, carriedTriaged(action), rolloverRan(from, to, carried, expiredRoutines),
+sessionStarted, sessionEnded(endedBy), checkInShown, checkInAnswered(yes|done|none),
+blockCreated(source: tapGap|drag|proposal), blockResolved(resolution),
+notificationPlanned(category, fireDate), notificationActed(category, action),
+cueFired(kind), freshStart(snapshot), freshStartUndone, comebackShown(gapDays),
+dayModeSet(mode), energyCheckIn(level), presence(state: active|idle|locked|asleep)
+```
+
+### 4.4 Data-quality rules
+
+| Issue | Rule |
+|-------|------|
+| Runaway sessions | D-14 check-in → `autoEnded`, excluded from estimator |
+| Untimed work | "I did it" → `unverified` session, excluded from estimator (D-12) |
+| Estimator sample size | No multiplier until ≥ `estimatorMinSamples` eligible sessions in the bucket |
+| Day boundary | All "today" logic uses `DayBoundary` + injected `Clock`; never `Calendar.startOfDay` |
+| Rollover gaps | Idempotent, keyed by `lastRolloverDay` (D-05) |
+| Event identity | Annotations keyed by external ID + occurrence start, not `eventIdentifier` (D-17) |
+| Calendar identity | Calendar modes keyed by `calendarIdentifier` with title fallback (D-09) |
+| Presence signals | Lock/unlock notifications are undocumented; idle API to be verified in the sandbox (D-24) |
 
 ---
 
 ## 5. Research → macOS surfaces
 
-| Research problem | Surface | Implementation notes |
-|------------------|---------|----------------------|
-| Out of sight, out of mind | **Menu bar item** shows the current task + countdown in the menu bar text | `MenuBarExtra` with **`.window` style**. Menu-style extras don't run a timer runloop, so timers won't tick there. Use `TimelineView` for the countdown. |
-| Frictionless capture | **Global hotkey → floating capture panel** (Spotlight-style) | `NSPanel` (`.nonactivatingPanel`, `.floating` level) hosting SwiftUI. Title only; Enter → Inbox. Optional NL parsing (Phase 6). |
-| Frictionless capture | **Control** in Control Center / menu bar | macOS 26 Controls API (`ControlWidget`) |
-| Time blindness | **Floating focus timer** (always on top, small) | Visible countdown for the active task; "just 5 minutes" entry point |
-| Time blindness | **Now line + countdowns** in all calendar views | `TimelineView(.periodic(from:by: 30))` |
-| Transitions / hyperfocus | **Escalating, time-sensitive notifications** | Time Sensitive Notifications entitlement; opt-in per event |
-| Notification fatigue | **Actionable notifications** | Category actions: Start · +10 min · Reschedule. All scheduled by `NotificationPlanner`. |
-| Context switching | **Focus filters** | `SetFocusFilterIntent`: Work Focus → show only the Work bucket |
-| Not opening the app | **Desktop / Notification Center widgets** | Now/Next + Today; interactive "Done"/"Start" via App Intents |
-| Hands-free | **App Intents → Siri, Shortcuts, Spotlight** | `AddTaskIntent`, `WhatsNextIntent`, `StartFiveMinutesIntent` |
-| Always available | **Launch at login** | `SMAppService.mainApp.register()` |
-| iPhone visibility before iOS app (optional) | **Mirror TimeBlocks to a dedicated "ExecFn" calendar** | One-way: the app owns blocks; edits made in Calendar.app are ignored/overwritten. Gives iPhone/Watch alerts for free. |
+| Research problem | Surface | Implementation |
+|------------------|---------|----------------|
+| Out of sight, out of mind | **Menu bar item**: current task + minutes left | Phase 0 spike decides `MenuBarExtra(.window)` vs `NSStatusItem` (D-25). Minute resolution in the bar. |
+| Frictionless capture | **Global hotkey → floating panel** | `NSPanel` subclass: `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, `canBecomeKey = true`. Title only; Enter → Inbox. |
+| Time blindness | **Floating focus timer**, now line, countdowns | `TimelineView`; seconds only in the timer/popover |
+| Hyperfocus | **Check-ins** during sessions | D-14 |
+| Transitions | **Escalating time-sensitive notifications** | Per-event opt-in via `EventAnnotation.transitionAlerts` |
+| Cue → action | **If-then cues** | `CueService`: wake/unlock, Focus change, event end → planner (D-19) |
+| Routines | **Daily instances + optional time cue** | D-20 |
+| Notification fatigue | **Actionable, budgeted notifications** | Start · +10 min · Reschedule; only `NotificationService` talks to `UNUserNotificationCenter` |
+| Context | **Focus filters** | `SetFocusFilterIntent`: Focus → bucket filter (Phase 5) |
+| Not opening the app | **Widgets**, launch at login | Phase 5 |
+| Hands-free | **App Intents** | Add task, What's next, Start 5 minutes (Phase 5) |
+| Reward | **Completion feedback** | D-21 |
 
 ---
 
 ## 6. Core logic (`EFCore`)
 
-All pure functions over plain values, with an injected `Clock` and `DayBoundary`.
+All functions are pure: `(snapshots, settings, clock) → result or [Change]`. The repository applies changes.
 
-### 6.1 Planner
+### 6.1 Rollover (D-05, D-06, D-20)
+Runs on launch, wake, and boundary; no-op if `lastRolloverDay == today`. From `previousActiveDay` → `today`, in order:
+1. Open routine instances with `routineDay < today` → `dropped(.routineExpired)`.
+2. Tasks with `carriedFrom != nil` (untouched carried items) → `carriedFrom = nil`.
+3. Open tasks with `isTodayMust` → `isTodayMust = false`, `carriedFrom = previousActiveDay`, `rolloverCount += (previousMode == .pause ? 0 : 1)`.
+4. Spawn today's routine instances from active templates.
+5. Emit `rolloverRan` with counts.
 
-- **Today list:** `isTodayMust` tasks (cap **3**, configurable) + timeboxed blocks for today + optional extras. Above the cap → suggest moving one to tomorrow; never block the user.
-- **Rollover (runs at day boundary + on app launch/wake):** unfinished today tasks → stay `active`, `isTodayMust = false`, `rolloverCount += 1`. No "overdue" state exists anywhere.
-- **Resurfacing:** tasks with `rolloverCount ≥ 3`, or untouched for 14 days, appear in the weekly review with one-tap: do this week / someday / drop.
-- **Fresh start:** bulk action: everything non-done → Inbox, all `isTodayMust = false`. Logged, reversible for 24h.
-- **Back-planning:** given `dueDate` + `estimate × multiplier`, propose `TimeBlock`s in free calendar slots before the due date, preferring the user's energy windows. **Proposal only**; the user accepts or adjusts.
-- **Pick-for-me:** deterministic score that always shows its reason ("due tomorrow · fits in 25 min · low energy"):
-  `score = w1·deadlineUrgency + w2·fitsAvailableTime + w3·energyMatch + w4·ageBoost − w5·recentlySkipped`
-- **Minimum day:** `DayPlan.mode = .minimum` → Today shows only tasks the user flagged as "minimum"; notifications drop to essentials.
-- **Pause day:** `DayPlan.mode = .pause` → no rollover increments, no nudges, nothing breaks.
+### 6.2 Today & Now
+- **Today** = musts (ordered) + today's routine instances + today's blocks + the "From yesterday" row. Cap from settings, adjusted by day energy (D-16) and mode (`minimum` → `isMinimum` tasks only).
+- **Now/Next** = D-08 rule.
 
-### 6.2 Estimator
+### 6.3 Calendar logic
+- **Busy intervals** = Busy-mode calendars, D-10 availability rule, all-day exclusion, plus `defaultBufferMinutes` / per-event travel around each (D-17).
+- **Free slots** = working window minus busy intervals minus existing blocks; snapped to `proposalSnapMinutes`.
+- **Tap-a-gap proposal** (D-11): gap + task → block sized `estimate × multiplier` (or 30 min), clipped to the gap.
+- **Back-planning** (Phase 6): due date + estimate → proposed blocks in free slots, preferring energy windows. Proposals only.
+- **Missed blocks** (D-12): `end < now ∧ task.open ∧ no overlapping session ∧ resolution == nil`.
 
-- Per bucket (fallback: global): `multiplier = median(actual / estimate)` over the last 20 clean sessions, clamped to `[0.5, 3.0]`, applied only when n ≥ 5.
-- Surfaced as a suggestion: "You usually take ~1.6× on Admin. Plan 40 min?"
-- Exposes estimate error over time for the Review screen.
+### 6.4 Sessions (D-14)
+- `nextCheckIn = start + (estimate × checkInMultiplier ?? checkInNoEstimateMinutes)`.
+- Unanswered for `checkInGraceMinutes` → end at check-in time, `autoEnded`.
 
-### 6.3 NotificationPlanner
+### 6.5 Recovery
+- **Fresh start** (D-15): returns changes + an undo snapshot; undo valid for 24 h.
+- **Comeback** (D-18): `now − lastActivity ≥ comebackGapDays` → show Welcome back once.
 
-- **Input:** today's events, blocks, tasks, `DayPlan`, budget, quiet hours, current time.
-- **Output:** a list of `PlannedNotification` (id, fireDate, category, copyKey, priority).
-- **Rules:**
-  - Daily budget (default **10**, configurable); allocate by priority: transition alerts > block starts > due-soon > nudges.
-  - Escalation for flagged events: T−15 heads-up → T−5 wrap up → T−0 go (+ "leave by" if the event has a location and travel buffer).
-  - Ignored notification → **one** follow-up after 10 min, then stop.
-  - Copy rotates through a pool per category (slows habituation).
-  - Keep pending count well under the system limit (iOS caps at 64; treat macOS the same).
-- `NotificationService` diffs planned vs. pending and applies only the changes.
+### 6.6 Estimator
+Per bucket (fallback global): `median(actual / estimate)` over the last `estimatorWindow` eligible sessions, clamped, applied only when n ≥ `estimatorMinSamples`. Surfaced as a suggestion.
 
-### 6.4 ActivityLog & metrics
+### 6.7 NotificationPlanner
+- **Input:** events, annotations, blocks, tasks, routines, cues, `DayPlan`, settings, now, current pending set.
+- **Output:** planned notifications + diff (add/remove).
+- **Priority:** transition alerts > block starts > routine times > if-then cues > due-soon > nudges.
+- **Budget:** `notificationBudget` per plan day; low day energy (D-16) or `minimum` mode → essentials only (transitions + routine times).
+- **Escalation** for annotated events: T−15 heads-up → T−5 wrap up → T−0 go; "leave by" = start − travel − buffer.
+- **Ignored notification:** one follow-up after 10 min, then stop.
+- **Quiet hours** respected; copy rotates per category.
+- **Pending set:** keep well under the system limit (iOS caps at 64; assume the same on macOS).
+- **Logging:** every planned fire time is logged (`notificationPlanned`) for the presence join (D-24).
 
-Events: `taskCreated, captured(source), started, sessionEnded, completed, dropped, rolledOver, snoozed, notificationDelivered, notificationActed(action), freshStart, dayModeSet, breakdownGenerated, breakdownAccepted`.
-
-Review-screen metrics (n=1 evaluation):
-- Estimate error ratio (median, trend)
-- Rollover rate (% of today musts that roll)
-- Notification action rate (acted ÷ delivered, per category)
-- Capture → done latency
-- Active days / month (no streaks)
-- Feature usage: hotkey captures, 5-min starts, breakdowns accepted
+### 6.8 Metrics (Review screen)
+Estimate error (median, trend) · carried-over rate · triage action mix · notification action rate per category · **% notifications due while away** (D-24) · capture → done latency · active days / month · feature usage (hotkey captures, 5-min starts, check-in answers, routine completion rate).
 
 ---
 
@@ -269,113 +364,146 @@ Review-screen metrics (n=1 evaluation):
 
 | Service | Responsibilities | Gotchas |
 |---------|------------------|---------|
-| `CalendarService` | Request **full** access (there is no read-only option); fetch events for a visible range; list calendars incl. subscribed (read-only); observe `.EKEventStoreChanged` → refetch visible range only; optional block mirroring | Sandboxed app needs the calendars entitlement + `NSCalendarsFullAccessUsageDescription` |
-| `NotificationService` | Register categories/actions; apply planner diff; route action responses back into `EFCore` + ActivityLog | Time-sensitive level requires its entitlement; user can disable it in Settings |
-| `IntelligenceService` | Protocol: `breakdown(task) -> [String]`, `parseCapture(text) -> CaptureDraft`, `suggestEstimate(task) -> Int?` | Check `SystemLanguageModel.default.availability` (Apple silicon + Apple Intelligence on). Always have a manual fallback. Small model: keep prompts narrow; use `@Generable` structs for guided output. |
-| `HotkeyService` | Register/rebind global capture shortcut | Default ⌥Space conflicts with some launchers; let the user rebind |
+| `CalendarService` | Full-access request; calendars list; events for visible range → `EventSnapshot`; observe `.EKEventStoreChanged` (debounce ~500 ms, refetch visible range) | Read requires full access; sandbox entitlement + `NSCalendarsFullAccessUsageDescription`; never write in the change handler; denied → D-22 |
+| `NotificationService` | Register categories/actions; apply planner diff; route actions → repository + activity log | Time-sensitive needs its entitlement; the user can revoke it |
+| `PresenceService` | `NSWorkspace` will-sleep/did-wake, screen lock/unlock (distributed notifications, undocumented), idle via `CGEventSource.secondsSinceLastEventType` | Verify the idle API in the sandbox; log transitions only |
+| `CueService` | Detect wake/unlock, Focus changes, event ends → fire if-then cues through the planner budget | Debounce wake (multiple notifications per wake) |
+| `IntelligenceService` | `breakdown`, `parseCapture`, `suggestEstimate` via Foundation Models `@Generable` | Check availability; narrow prompts; manual fallback (Phase 6) |
+| `HotkeyService` | Register/rebind capture shortcut | Default may conflict with launchers |
 
 ---
 
 ## 8. Guardrails enforced in code
 
-- [ ] `TaskItem.title` is the only required input (initializer + capture UI).
-- [ ] No `overdue` case exists in `TaskStatus`. No red badges. No missed-task counts in UI.
-- [ ] Today cap enforced in `Planner`, not in views.
-- [ ] Every notification flows through `NotificationPlanner`. Direct `UNUserNotificationCenter.add` calls outside `NotificationService` fail code review.
-- [ ] All user-facing strings live in `Localizable.xcstrings`. Tone rule: neutral, no "failed", "missed", "behind", "you should".
+- [ ] `title` is the only required input.
+- [ ] No overdue status; no red badges; no missed counts anywhere in the UI.
+- [ ] Rollover never hides work silently: carried tasks are visible for one day with triage (D-06).
+- [ ] Routine instances expire; they never accumulate (D-20).
+- [ ] Today cap is a suggestion with an override (D-07).
+- [ ] Only `NotificationService` calls `UNUserNotificationCenter`; it only applies `NotificationPlanner` output.
+- [ ] The `CalendarService` change handler never writes to EventKit.
 - [ ] Planner proposals never auto-apply.
-- [ ] Every user action writes an `ActivityEvent`.
+- [ ] All user-facing strings live in `Localizable.xcstrings`. Banned words: failed, missed, behind, overdue, should.
+- [ ] Every user action and presence transition writes an activity event.
 
 ---
 
 ## 9. Build order
 
-Each phase ends with something usable. **Use it daily after Phase 2** and reorder later phases based on real use.
+**Use it daily from the end of Phase 2.** Reorder later phases based on the Review metrics.
+
+### Phase 0 — Spike (≤ 1 day, throwaway)
+- Menu bar label that updates every minute: `MenuBarExtra(.window)` first, `NSStatusItem` fallback (D-25).
+- Capture `NSPanel` over a full-screen app via global hotkey; accepts typing without activating the app.
+- Idle-time and lock/unlock signals readable from a sandboxed app (D-24).
+- **Done when:** all three work, or the fallback is chosen and noted in `DECISIONS.md`.
 
 ### Phase 1 — Skeleton
-- Xcode multiplatform project (macOS target only enabled), `EFCore` package, App Group, entitlements.
-- SwiftData models + `VersionedSchema` v1, `DayBoundary`, `Clock`.
-- `CalendarService` full-access flow → **Day view** showing today's events with a now line.
-- **Done when:** app launches, asks for calendar access, shows today's events including subscribed calendars; EFCore tests run green.
+- Xcode project (macOS target), `EFCore` + `EFPersistence` packages, App Group, entitlements.
+- Domain types, `PlannerSettings`, `Clock`, `DayBoundary`, `PlanDay`.
+- Main store (`VersionedSchema` v1) + local-only activity store + export.
+- `CalendarService` with full-access flow, **denied-access mode** (D-22), **calendar modes** (D-09), **all-day/availability rule** (D-10).
+- Day view: events (all-day strip + timed), now line.
+- Verify whether EventKit exposes travel time (D-17).
+- **Done when:** today's events render with correct busy/visible/hidden behavior; the app is usable with access denied; `EFCore` tests are green.
 
-### Phase 2 — Capture & Now *(start daily use here)*
-- Global hotkey → floating capture panel → Inbox.
-- **Now** view: one task + next, first-step field, Start → focus timer → `WorkSession`.
-- `MenuBarExtra` (.window) with current task + countdown.
-- Launch at login. ActivityLog wired.
-- **Done when:** you can capture from anywhere in <3s and see your current task in the menu bar without opening a window.
+### Phase 2 — Capture, Now, and a day that survives *(start daily use)*
+- Hotkey capture panel → Inbox (derived, D-03).
+- Today: musts with cap (D-07); Now/Next (D-08); first-step field; Start → focus timer → session.
+- Menu bar item with current task + minutes left.
+- **Rollover with "From yesterday" row** (D-05, D-06).
+- Check-ins / auto-end (D-14). Completion feedback (D-21).
+- Launch at login. Activity log + presence logging wired.
+- **Done when:** a full week of use produces no stale Today and no Inbox you avoid.
 
-### Phase 3 — Buckets & scheduling
-- Buckets CRUD (optional at capture; assign later).
-- Unscheduled sidebar → drag onto Day view → `TimeBlock`; resize/move blocks.
-- Manual subtask breakdown; "just 5 minutes" start.
-- Missed block → one-tap reschedule prompt (no stale blocks).
-- **Done when:** a day can be planned by dragging tasks between events.
+### Phase 3 — Buckets, scheduling, routines
+- Buckets (optional at capture).
+- Tap-a-gap proposals + Day-column drag/resize (D-11); overlap rendering (D-13).
+- Missed-block prompt (D-12). Manual subtasks; "just 5 minutes".
+- Routines: templates + daily instances + expiry (D-20), no time cues yet.
+- Fresh start + undo (D-15). Someday view.
+- **Done when:** a day is planned by tapping gaps or dragging, and routines show up daily without piling up.
 
-### Phase 4 — Week/Month + Planner + Notifications
-- Week view (7 columns, drag across days), Month view (density + tap → day).
-- Rollover job, Today cap, Fresh start, ideal/minimum/pause day modes.
-- `NotificationPlanner` + actionable categories + escalation + budget.
-- **Done when:** a full week runs with no manual cleanup and no notification spam.
+### Phase 4a — Planner & notifications
+- `NotificationPlanner` + actionable categories + budget + escalation + follow-up.
+- Event annotations: travel, transition alerts (D-17).
+- Routine time cues; if-then cue binding (D-19) via `CueService`.
+- Day modes (ideal/minimum/pause) + energy check-in mapping (D-16).
+- Welcome back screen (D-18).
+- **Done when:** a week runs with timely, non-duplicated, budgeted notifications; the presence metric starts accumulating.
+
+### Phase 4b — Week & Month views
+- Week: 7 columns reusing the Day column, read-only + tap-a-gap → then cross-day drag.
+- Month: density + tap → Day.
+- **Done when:** next week can be planned from the Week view.
 
 ### Phase 5 — System surfaces
-- Widgets (Now/Next, Today) with interactive buttons.
-- App Intents: Add task, What's next, Start 5 minutes. Siri/Shortcuts/Spotlight.
-- Focus filters ↔ buckets. Control for quick capture.
-- Optional: mirror TimeBlocks to the dedicated Apple Calendar.
-- **Done when:** a typical day needs the main window only for planning.
+- Widgets (Now/Next, Today) with interactive Done/Start.
+- App Intents: Add task, What's next, Start 5 minutes → Siri / Shortcuts / Spotlight.
+- Focus filters ↔ buckets. Capture Control.
+- **Done when:** the main window is needed only for planning.
 
 ### Phase 6 — Intelligence & learning
-- `IntelligenceService`: AI breakdown (accept/edit before saving), natural-language capture parsing, estimate suggestions.
-- Estimator multiplier surfaced in scheduling.
-- Energy windows + energy tags → back-planning + pick-for-me.
-- Energy check-in → scales Today.
-- Weekly Review screen with metrics (§6.4).
-- **Done when:** the app proposes realistic plans from your own data, and you can see estimate error trending down.
+- `IntelligenceService`: AI breakdown (accept/edit), natural-language capture, estimate suggestions.
+- Estimator multiplier in proposals; energy windows; back-planning; scored pick-for-me (replaces D-08 step 6).
+- Weekly Review with metrics (§6.8).
+- **Done when:** proposals use your own data and estimate error trends down.
 
 ### Phase 7 — iOS, Live Activity, sync
-- Enable iOS target; reuse `EFCore` + services.
-- Live Activity for the active task (shows on Lock Screen, Dynamic Island, and the Mac menu bar via iPhone).
-- Watch complication.
-- SwiftData + CloudKit sync (paid Developer Program).
-- **Done when:** capture on phone → appears on Mac; active task visible on the phone's Lock Screen.
+- **Trigger:** move this earlier if "% notifications due while away" is high after 2–3 weeks of Phase 4a (D-24).
+- iOS target reusing both packages; Live Activity for the active task (appears on Lock Screen, Dynamic Island, and the Mac menu bar via iPhone); Watch complication.
+- SwiftData + CloudKit for the main store only; the activity store stays per device.
+- **Done when:** capture on phone → Mac; the active task is visible on the phone's Lock Screen.
 
-### Later (only if data says it's worth it)
-- Focus sessions / virtual body doubling
-- Accountability-partner sharing
-- Swap in a larger model via the Foundation Models provider abstraction
+### Not in v1
+See D-26: reward pairing, themes, wind-down reminders, body doubling, accountability partners, Apple Calendar mirror (D-23), streaks.
 
 ---
 
 ## 10. Risks
 
-| Risk | Why | Mitigation |
-|------|-----|------------|
-| Calendar UI effort | SwiftUI has no calendar grid; Week view with drag-and-drop is the hardest single component | Build Day view first and reuse its column for Week; budget the most time here |
-| EventKit change storms | `.EKEventStoreChanged` fires often and coarsely | Debounce (≈500 ms); refetch visible range only |
-| Time edge cases | Sleep/wake, DST, day boundary ≠ midnight | Injected `Clock`; dedicated tests; run rollover on wake + launch, not just on a timer |
-| Notification over/under delivery | Pending limits; the user disables time-sensitive alerts | Planner diffing; graceful degradation; Settings shows the current authorization state |
-| On-device model quality | Device-scale model; may be unavailable | Narrow prompts, guided generation, always a manual path |
-| Schema changes after sync | CloudKit schema is append-only in production | CloudKit-compatible rules + versioned schema from v1 |
-| Scope creep / abandonment | Builder + user are the same person | Phase 2 daily use; ship small; let ActivityLog decide priorities |
+| Risk | Mitigation |
+|------|------------|
+| Menu bar label doesn't update | Phase 0 spike; `NSStatusItem` fallback |
+| Week view drag-and-drop effort | Split into 4b; tap-a-gap first; reuse the Day column |
+| Mapping boilerplate (D-01) | Generate mappers per model; tests per mapper |
+| EventKit change storms | Debounce; refetch the visible range only; never write in the handler |
+| Event/calendar identifier churn | External ID + occurrence keys; title fallback for calendars |
+| Time edge cases (DST, sleep, 4 AM boundary, long absences) | Injected `Clock`; idempotent rollover; dedicated tests |
+| Presence signals undocumented / sandboxed | Phase 0 verification; degrade to sleep/wake only |
+| Notification duplicates / over-budget | Single service, planner diff, no calendar mirror |
+| On-device model quality | Narrow prompts, guided generation, manual path |
+| CloudKit schema lock-in | CloudKit rules from v1; activity store excluded from sync |
+| Scope creep / abandonment | Daily use from Phase 2; metrics decide priorities; D-26 cut list |
 
 ---
 
-## 11. Info.plist & entitlements checklist
+## 11. Info.plist & entitlements
 
 - `NSCalendarsFullAccessUsageDescription`: "Shows your calendar alongside your tasks so you can plan around real commitments."
 - Entitlements:
   - App Sandbox
   - `com.apple.security.personal-information.calendars`
-  - App Groups (shared container for app + widgets + intents; macOS group ID format differs from iOS, so set it via Signing & Capabilities)
+  - App Groups (main store, activity store, settings; set via Signing & Capabilities, since the macOS group ID format differs from iOS)
   - Time Sensitive Notifications
   - iCloud / CloudKit (Phase 7)
-- `LSUIElement`: **NO**. Keep the Dock icon; the menu bar item is additive, not a replacement.
+- `LSUIElement`: **NO**. Keep the Dock icon; the menu bar item is additive.
 
 ---
 
 ## 12. Testing
 
-- **EFCore:** Swift Testing unit tests for Planner, Estimator, NotificationPlanner, DayBoundary, all with fixed clocks. Required cases: DST forward/back, 3:59 vs 4:01 AM rollover, sleep across the boundary, budget exhaustion, zero-estimate tasks, runaway sessions.
-- **Services:** protocol fakes for EventKit/notifications/intelligence; one manual test checklist per phase for real-device permission flows.
-- **Dogfooding:** weekly 5-minute look at the Review metrics. Kill or change any feature whose usage or effect stays flat for 3 weeks.
+**`EFCore` unit tests** (fixed `Clock`), including:
+- Rollover: 3:59 vs 4:01 AM; DST forward/back; sleep across the boundary; a 9-day absence runs once; pause-day no increment; carried items clear after one day; routine instances expire and never carry
+- Now rule: each precedence step; ties; empty state
+- Calendar: all-day + availability matrix; Busy/Visible/Hidden; buffers/travel; proposal clipping; missed-block detection incl. unverified sessions
+- Sessions: check-in with and without an estimate; auto-end timing; estimator eligibility
+- Fresh start + undo round-trip; comeback threshold
+- Notifications: budget exhaustion by priority; minimum/low-energy filtering; quiet hours; escalation times; follow-up once; diff correctness
+- Energy mapping; Today cap override
+
+**`EFPersistence` tests:** mapper round-trips; migration v1 → v2 smoke test; activity store isolation (no CloudKit).
+
+**Manual checklist per phase:** permission flows (granted / denied / revoked), full-screen capture, sleep/wake behavior.
+
+**Dogfooding:** weekly 5-minute Review. Change or cut any feature whose usage or effect stays flat for 3 weeks.
