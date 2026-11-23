@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DayScreen: View {
     @Bindable var model: AppModel
+    @State private var timelineWidth: CGFloat = 720
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +19,19 @@ struct DayScreen: View {
         }
         .frame(minWidth: 760, minHeight: 560)
         .task { await model.start() }
+        .onAppear { publishEvents() }
+        .onChange(of: model.dayContent) { _, _ in publishEvents() }
+        .sheet(isPresented: Binding(
+            get: { model.planner.gapAwaitingTask != nil },
+            set: { if !$0 { model.planner.gapAwaitingTask = nil } }
+        )) {
+            GapTaskPicker(planner: model.planner)
+        }
+    }
+
+    private func publishEvents() {
+        model.planner.scheduledEvents = model.dayContent.allDay + model.dayContent.timed
+        model.planner.scheduledDay = model.selectedDay
     }
 
     private var header: some View {
@@ -46,6 +60,17 @@ struct DayScreen: View {
             }
 
             Spacer()
+
+            if let draft = model.planner.draft, let title = model.planner.task(draft.taskID)?.title {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Button("Place it") { model.planner.acceptDraft() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Button("Cancel") { model.planner.cancelDraft() }
+                    .controlSize(.small)
+            }
 
             Text("Solid reserves time. Dashed stays visible and leaves the time open.")
                 .font(.caption)
@@ -88,10 +113,37 @@ struct DayScreen: View {
             ScrollView {
                 ZStack(alignment: .topLeading) {
                     hourGrid(start: start, end: end, height: height, boundary: boundary)
+                    planningWindowShade(start: start, seconds: seconds, height: height, day: day, boundary: boundary)
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            SpatialTapGesture().onEnded { value in
+                                let fraction = min(max(value.location.y / height, 0), 1)
+                                let date = start.addingTimeInterval(seconds * fraction)
+                                model.planner.tapTimeline(date, on: day, events: model.dayContent.allDay + model.dayContent.timed)
+                            }
+                        )
                     ForEach(model.dayContent.timed) { item in
                         if let fraction = CalendarRules.fraction(of: item.event, on: day, boundary: boundary) {
                             timedBlock(item, fraction: fraction, height: height, placement: placed[item.id])
                         }
+                    }
+                    ForEach(blocks(on: day, boundary: boundary)) { block in
+                        if let fraction = blockFraction(block, day: day, boundary: boundary) {
+                            TaskBlockView(
+                                planner: model.planner,
+                                block: block,
+                                title: model.planner.task(block.taskID)?.title ?? "Task",
+                                fraction: fraction,
+                                height: height,
+                                laneWidth: timelineWidth,
+                                overlapsEvent: overlapsEvent(block)
+                            )
+                        }
+                    }
+                    if let draft = model.planner.draft, boundary.planDay(containing: draft.start) == day,
+                       let fraction = blockFraction(draft, day: day, boundary: boundary) {
+                        draftGhost(draft, fraction: fraction, height: height)
                     }
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         if context.date >= start, context.date < end {
@@ -104,6 +156,7 @@ struct DayScreen: View {
                 }
                 .frame(height: height, alignment: .top)
                 .padding(.trailing, 16)
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { timelineWidth = $0 }
             }
             .onAppear { scroll(proxy, start: start, end: end, boundary: boundary) }
             .onChange(of: model.selectedDay) { _, _ in
@@ -274,7 +327,7 @@ struct DayScreen: View {
             return
         }
         let marks = hourMarks(start: start, end: end, calendar: boundary.calendar)
-        let morning = marks.first { boundary.calendar.component(.hour, from: Date(timeIntervalSince1970: $0.instant)) == 8 }
+        let morning = marks.first { boundary.calendar.component(.hour, from: Date(timeIntervalSince1970: $0.instant)) == 5 }
         proxy.scrollTo(morning?.id ?? marks.first?.id ?? "now-line", anchor: .top)
     }
 
@@ -296,6 +349,54 @@ struct DayScreen: View {
             cursor = next
         }
         return marks
+    }
+
+    private func planningWindowShade(start: Date, seconds: TimeInterval, height: CGFloat, day: PlanDay, boundary: DayBoundary) -> some View {
+        let window = Scheduling.window(on: day, boundary: boundary, settings: model.settings)
+        let leading = max(0, window.start.timeIntervalSince(start) / seconds)
+        let trailing = min(1, window.end.timeIntervalSince(start) / seconds)
+        return Rectangle()
+            .fill(Color.primary.opacity(0.035))
+            .frame(height: max(height * (trailing - leading), 0))
+            .offset(y: height * leading)
+            .allowsHitTesting(false)
+    }
+
+    private func blocks(on day: PlanDay, boundary: DayBoundary) -> [BlockSnapshot] {
+        let start = boundary.start(of: day)
+        let end = boundary.end(of: day)
+        return model.planner.blocks.filter { $0.resolution == nil && $0.end > start && $0.start < end }
+    }
+
+    private func blockFraction(_ block: BlockSnapshot, day: PlanDay, boundary: DayBoundary) -> DayFraction? {
+        let dayStart = boundary.start(of: day)
+        let dayEnd = boundary.end(of: day)
+        let duration = dayEnd.timeIntervalSince(dayStart)
+        guard duration > 0 else { return nil }
+        let start = max(block.start, dayStart)
+        let end = min(block.end, dayEnd)
+        guard end > start else { return nil }
+        return DayFraction(start: start.timeIntervalSince(dayStart) / duration, end: end.timeIntervalSince(dayStart) / duration)
+    }
+
+    private func overlapsEvent(_ block: BlockSnapshot) -> Bool {
+        model.dayContent.timed.contains { $0.event.start < block.end && $0.event.end > block.start }
+    }
+
+    private func draftGhost(_ draft: BlockSnapshot, fraction: DayFraction, height: CGFloat) -> some View {
+        let top = height * fraction.start
+        let blockHeight = max(height * (fraction.end - fraction.start), 28)
+        return Text(model.planner.task(draft.taskID)?.title ?? "")
+            .font(.callout.weight(.semibold))
+            .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.teal.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.teal, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            .padding(.leading, 68)
+            .padding(.trailing, 16)
+            .frame(height: blockHeight)
+            .offset(y: top)
+            .allowsHitTesting(false)
     }
 
     private func columns(
@@ -350,3 +451,106 @@ private struct ColumnPlacement {
 }
 
 private let hourHeight: CGFloat = 52
+
+/// A task block on the day column. Drag moves it; the handle resizes it. Both may overlap events (D-13).
+struct TaskBlockView: View {
+    let planner: PlannerModel
+    let block: BlockSnapshot
+    let title: String
+    let fraction: DayFraction
+    let height: CGFloat
+    let laneWidth: CGFloat
+    let overlapsEvent: Bool
+    @State private var dragY: CGFloat = 0
+    @State private var resizeY: CGFloat = 0
+
+    var body: some View {
+        let top = height * fraction.start + dragY
+        let blockHeight = max(height * (fraction.end - fraction.start) + resizeY, 24)
+        let lane = max(laneWidth - 76, 40)
+        let width = overlapsEvent ? lane / 2 : lane
+        let x = 68 + (overlapsEvent ? lane / 2 : 0)
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .gesture(move)
+            Capsule()
+                .fill(Color.teal.opacity(0.8))
+                .frame(width: 28, height: 5)
+                .padding(.bottom, 4)
+                .gesture(resize)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .frame(width: max(width - 6, 40), height: blockHeight, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.teal.opacity(0.18)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.teal.opacity(0.9), lineWidth: 2))
+        .offset(x: x, y: top)
+    }
+
+    private var move: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { dragY = $0.translation.height }
+            .onEnded { value in
+                let minutes = value.translation.height / hourHeight * 60
+                planner.moveBlock(block.id, toStart: block.start.addingTimeInterval(minutes * 60))
+                dragY = 0
+            }
+    }
+
+    private var resize: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { resizeY = $0.translation.height }
+            .onEnded { value in
+                let minutes = value.translation.height / hourHeight * 60
+                planner.resizeBlock(block.id, toEnd: block.end.addingTimeInterval(minutes * 60))
+                resizeY = 0
+            }
+    }
+}
+
+/// Shown when a gap is tapped and nothing is Now yet.
+struct GapTaskPicker: View {
+    let planner: PlannerModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Which task?").font(.title3.weight(.semibold))
+            if planner.musts.isEmpty && planner.inbox.isEmpty {
+                Text("Nothing waiting.").foregroundStyle(.secondary)
+            }
+            List {
+                if !planner.musts.isEmpty {
+                    Section("Today") {
+                        ForEach(planner.musts) { task in
+                            Button(task.title) { choose(task.id) }
+                        }
+                    }
+                }
+                if !planner.inbox.isEmpty {
+                    Section("Inbox") {
+                        ForEach(planner.inbox) { task in
+                            Button(task.title) { choose(task.id) }
+                        }
+                    }
+                }
+            }
+            .frame(height: 260)
+            Button("Cancel", role: .cancel) {
+                planner.cancelDraft()
+                dismiss()
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+    }
+
+    private func choose(_ id: UUID) {
+        planner.chooseTaskForGap(id)
+        dismiss()
+    }
+}

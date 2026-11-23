@@ -14,6 +14,9 @@ public enum Rollover {
     public struct Result: Hashable, Sendable {
         /// Tasks whose fields changed. Only these need writing.
         public var changedTasks: [TaskSnapshot]
+        /// Today's routine instances, created in the same save (D-20).
+        public var spawnedTasks: [TaskSnapshot]
+        public var spawnedSubtasks: [SubtaskSnapshot]
         /// D-08: yesterday's pin must not outrank today's musts.
         public var clearPin: Bool
         public var summary: Summary
@@ -25,9 +28,11 @@ public enum Rollover {
     /// - Returns: `nil` when there's nothing to do (already ran today, or the clock went backwards).
     public static func run(
         tasks: [TaskSnapshot],
+        routines: [RoutineTemplate] = [],
         lastRolloverDay: PlanDay?,
         previousDayMode: DayMode = .ideal,
-        today: PlanDay
+        today: PlanDay,
+        now: Date = Date()
     ) -> Result? {
         if let lastRolloverDay, lastRolloverDay >= today { return nil }
         let previous = lastRolloverDay ?? today.advanced(by: -1)
@@ -70,10 +75,20 @@ public enum Rollover {
             if task != original { changed.append(task) }
         }
 
-        // 4. Spawning today's routine instances arrives with routines (Phase 3, D-20).
+        // 4. Spawn today's routine instances. An existing instance for this day is left as it is.
+        var spawned: [TaskSnapshot] = []
+        var subtasks: [SubtaskSnapshot] = []
+        let known = tasks + changed
+        for template in routines {
+            guard let instance = RoutineRules.spawn(template, on: today, existing: known, now: now) else { continue }
+            spawned.append(instance.task)
+            subtasks.append(contentsOf: instance.subtasks)
+        }
 
         return Result(
             changedTasks: changed,
+            spawnedTasks: spawned,
+            spawnedSubtasks: subtasks,
             clearPin: true,
             summary: Summary(
                 from: lastRolloverDay,

@@ -110,20 +110,22 @@ Default numbers are starting points, not research findings. Tune them with Activ
 **Why:** Otherwise one all-day event blocks the entire day for proposals and the now line.
 
 ### D-11 · Scheduling: tap-a-gap first, day-column drag, cross-day drag last
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Decision:**
-- Phase 3: tap a free gap → proposed block for a chosen task (snap 15 min) → accept or adjust. Drag within the Day column (move and resize).
+- Free time for proposals is **5:00–21:00** on the plan day's civil date (`planningWindowStartMinutes` / `planningWindowEndMinutes`). The timeline still draws the whole plan day. Dragging a block may leave that window.
+- Phase 3: tap a free gap → a ghost block. If something is Now, the ghost is for that task; otherwise a short picker lists today's musts, then the Inbox. Length is the estimate, or 30 minutes when there is none, rounded to the nearest 15 and clipped to the gap. Nothing is saved until **Place it**. "Place on today" drafts the next free gap the same way.
+- Drag within the Day column moves and resizes, snapped to 15 minutes. That is the user deciding, so it saves immediately and may overlap (D-13).
 - Phase 4b: Week view starts read-only + tap-a-gap. Cross-day drag comes after. Month view is density + tap-to-day.
 
-**Why:** Tap-a-gap is the same code as back-planning proposals and the keyboard-accessible path. The hard UI is cross-day drag, resize and overlap layout on a 7-column grid, so it goes last.
+**Why:** Tap-a-gap is the same code as back-planning proposals and the keyboard-accessible path. The hard UI is cross-day drag, resize and overlap layout on a 7-column grid, so it goes last. The check-in multiplier and the estimator are not a block length.
 
-### D-12 · Missed blocks get a one-tap prompt
-**Status:** Proposed
-**Decision:** A block is **missed** when its end has passed, its task isn't done, no work session overlaps it, and it has no resolution. Prompt: **Reschedule** · **Unschedule** · **I did it**. "I did it" records an **unverified** session (excluded from the estimator). The resolution is stored on the block so it never prompts twice.
-**Why:** "No stale blocks" needs a detector. Unverified sessions keep estimator data clean.
+### D-12 · A passed block gets one prompt
+**Status:** Accepted (2026-11-22)
+**Decision:** A block is waiting when its end has passed, its task is still open, no session overlaps it, and it has no resolution. Show one at a time, earliest first. The words are **"This time has passed."** Actions: **Reschedule** · **Leave it** · **I did it**. Reschedule marks the old block resolved and drafts the next free gap today that can hold it; if today has no gap long enough, the prompt says **"The day is full."** and Leave it is the way out. Leave it and I did it free the task to return to the Inbox. "I did it" records an **unverified** session over the block's own start and end (excluded from the estimator) and does not start a live timer. The resolution is stored on the block so it never prompts twice.
+**Why:** "No stale blocks" needs a detector. Unverified sessions keep estimator data clean. The UI never says "missed".
 
 ### D-13 · Overlap is allowed when you create it; proposals never create it
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Decision:** User-placed blocks may overlap events or other blocks (rendered side by side). Planner proposals only use free time per D-09/D-10.
 **Why:** The app proposes, the user decides.
 
@@ -170,8 +172,8 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Recovery
 
 ### D-15 · Fresh start is barely destructive; undo for 24 h
-**Status:** Proposed
-**Decision:** Fresh start clears `isTodayMust` and `carriedFrom` on all open tasks. An optional checkbox also moves tasks untouched for 30+ days to **Someday** (hidden from default lists, surfaced in the weekly review). It does not touch blocks or completed tasks. A snapshot `[taskID: (isTodayMust, carriedFrom, isSomeday)]` is stored with the activity event; Undo is available for 24 h.
+**Status:** Accepted (2026-11-22)
+**Decision:** Fresh start clears `isTodayMust`, `todayOrder`, and `carriedFrom` on all open tasks. An optional checkbox also moves tasks untouched for 30+ days to **Someday**. Someday is also a manual move, and bringing a task back clears `isSomeday` so it can return to the Inbox. Fresh start does not touch blocks, the running session, the pin, or completed tasks. A snapshot of those fields is stored with the activity event; Undo is available for 24 h and only restores tasks that are still open.
 **Why:** If it barely destroys anything, undo is trivial and the button is safe to press on a bad day.
 
 ### D-18 · Comeback screen after ≥ 3 days away
@@ -204,9 +206,9 @@ Default numbers are starting points, not research findings. Tune them with Activ
 **Rejected:** Text only (no external support). Renaming it to notes (throws away the evidence-based part).
 
 ### D-20 · Routines: templates spawn daily instances that expire
-**Status:** Proposed
-**Decision:** `RoutineTemplate { title, schedule, timeOfDay?, checklist[], bucket?, energy? }`, where schedule is `.daily | .weekdays | .weekly(days) | .everyNDays(n, anchor)`. At rollover, create today's instance as a task (`routineID`, `routineDay`). Open instances from earlier days become `dropped(.routineExpired)`. They never roll over, never appear in "From yesterday", and are never shown as missed. Basic routines in Phase 3; time cues in Phase 4a. No RRULE.
-**Why:** Routines are a large share of daily ADHD failure. Accumulating missed instances recreates the red pile.
+**Status:** Accepted (2026-11-22)
+**Decision:** `RoutineTemplate { title, schedule, timeOfDay?, checklist[], bucket?, energy? }`, where schedule is `.daily | .weekdays | .weekly(days) | .everyNDays(n, anchor)`. At rollover, in the same save, create today's instance as a task (`routineID`, `routineDay`) unless one already exists for that day. The template's checklist becomes subtasks. Open instances from earlier days become `dropped(.routineExpired)`. They never roll over, never appear in "From yesterday", and are never shown as passed. Today shows them in their own row; they do not count toward the cap of 3. Editing a template changes future instances. Turning it off stops future days. `timeOfDay` is stored and does nothing until Phase 4a: no alarm, no automatic block. A routine created during the day spawns today's instance immediately when it is due. No RRULE.
+**Why:** Routines are a large share of daily ADHD failure. Accumulating skipped instances recreates the red pile.
 
 ---
 
@@ -264,6 +266,9 @@ Default numbers are starting points, not research findings. Tune them with Activ
 | `quietHours` | 22:00–08:00 | NotificationPlanner |
 | `defaultBufferMinutes` | 10 | D-17 |
 | `proposalSnapMinutes` | 15 | D-11 |
+| `planningWindowStartMinutes` | 5:00 | D-11 |
+| `planningWindowEndMinutes` | 21:00 | D-11 |
+| `defaultBlockMinutes` | 30 | D-11 |
 | `nowLookaheadMinutes` | 60 | D-08 |
 | `checkInMultiplier` | 1.5 | D-14 |
 | `checkInNoEstimateMinutes` | 45 | D-14 |

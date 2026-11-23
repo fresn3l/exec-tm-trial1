@@ -335,8 +335,8 @@ The pure function returns `[Change]` plus `clearPin: Bool`; the repository appli
 
 ### 6.3 Calendar logic
 - **Busy intervals** = Busy-mode calendars, D-10 availability rule, all-day exclusion, plus `defaultBufferMinutes` / per-event travel around each (D-17).
-- **Free slots** = working window minus busy intervals minus existing blocks; snapped to `proposalSnapMinutes`.
-- **Tap-a-gap proposal** (D-11): gap + task → block sized `estimate × multiplier` (or 30 min), clipped to the gap.
+- **Free slots** = 5:00–21:00 minus busy intervals (buffer and travel included) minus unresolved blocks; snapped to `proposalSnapMinutes`. Dragging may leave the window (D-11).
+- **Tap-a-gap proposal** (D-11): gap + task → ghost block sized to the estimate, or 30 min, snapped to 15 and clipped to the gap. Saved only when accepted.
 - **Back-planning** (Phase 6): due date + estimate → proposed blocks in free slots, preferring energy windows. Proposals only.
 - **Missed blocks** (D-12): `end < now ∧ task.open ∧ no overlapping session ∧ resolution == nil`.
 

@@ -12,6 +12,9 @@ struct SettingsTests {
         #expect(settings.quietHours.endMinutes == 8 * 60)
         #expect(settings.defaultBufferMinutes == 10)
         #expect(settings.proposalSnapMinutes == 15)
+        #expect(settings.planningWindowStartMinutes == 5 * 60)
+        #expect(settings.planningWindowEndMinutes == 21 * 60)
+        #expect(settings.defaultBlockMinutes == 30)
         #expect(settings.nowLookaheadMinutes == 60)
         #expect(settings.checkInMultiplier == 1.5)
         #expect(settings.checkInNoEstimateMinutes == 45)
@@ -53,6 +56,9 @@ struct SettingsTests {
         #expect(decoded.dayBoundaryHour == 5)
         #expect(decoded.todayCap == 2)
         #expect(decoded.fiveMinuteStartMinutes == 5)
+        #expect(decoded.planningWindowStartMinutes == 5 * 60)
+        #expect(decoded.planningWindowEndMinutes == 21 * 60)
+        #expect(decoded.defaultBlockMinutes == 30)
         #expect(decoded.calendarModes["cal-1"] == CalendarModeOverride(mode: .hidden, title: "Birthdays"))
     }
 

@@ -23,6 +23,16 @@ public final class ActivityLog {
         try context.save()
     }
 
+    public func latest(kind: ActivityKind) throws -> ActivityEvent? {
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<ActivityEventModel>(
+            predicate: #Predicate { $0.kindRaw == raw },
+            sortBy: [SortDescriptor(\.at, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first.map(decode)
+    }
+
     public func events() throws -> [ActivityEvent] {
         let descriptor = FetchDescriptor<ActivityEventModel>(
             sortBy: [SortDescriptor(\.at)]

@@ -2,10 +2,10 @@ import Foundation
 
 /// Derived lists (D-03, D-06, D-07). Nothing here is stored.
 public enum TodayRules {
-    /// D-03: open, no bucket, not a must, no block, not a routine instance, not Someday, not carried.
-    /// Newest first.
+    /// D-03: open, no bucket, not a must, no unresolved block, not a routine instance, not Someday, not carried.
+    /// A resolved block no longer holds the task out of the Inbox. Newest first.
     public static func inbox(tasks: [TaskSnapshot], blocks: [BlockSnapshot] = []) -> [TaskSnapshot] {
-        let blocked = Set(blocks.map(\.taskID))
+        let blocked = Set(blocks.filter { $0.resolution == nil }.map(\.taskID))
         return tasks
             .filter {
                 $0.status == .open
@@ -17,6 +17,19 @@ public enum TodayRules {
                     && $0.carriedFrom == nil
             }
             .sorted { ($0.createdAt, $0.id.uuidString) > ($1.createdAt, $1.id.uuidString) }
+    }
+
+    /// Today's routine instances that are still open and not also a must. They do not count toward the cap.
+    public static func routinesToday(tasks: [TaskSnapshot], today: PlanDay) -> [TaskSnapshot] {
+        tasks
+            .filter { $0.status == .open && $0.routineID != nil && $0.routineDay == today && !$0.isTodayMust }
+            .sorted { ($0.title, $0.id.uuidString) < ($1.title, $1.id.uuidString) }
+    }
+
+    public static func someday(tasks: [TaskSnapshot]) -> [TaskSnapshot] {
+        tasks
+            .filter { $0.status == .open && $0.isSomeday }
+            .sorted { ($0.lastTouchedAt, $0.id.uuidString) < ($1.lastTouchedAt, $1.id.uuidString) }
     }
 
     /// Open Today musts in order.
@@ -166,5 +179,45 @@ public enum TaskCommands {
         }
         t.lastTouchedAt = now
         return t
+    }
+
+    public static func setBucket(_ task: TaskSnapshot, _ bucketID: UUID?, now: Date) -> TaskSnapshot {
+        var t = task
+        t.bucketID = bucketID
+        t.lastTouchedAt = now
+        return t
+    }
+
+    /// Leaves Today and the carried row. The Someday list is where it shows.
+    public static func moveToSomeday(_ task: TaskSnapshot, now: Date) -> TaskSnapshot {
+        var t = task
+        t.isSomeday = true
+        t.isTodayMust = false
+        t.todayOrder = nil
+        t.carriedFrom = nil
+        t.lastTouchedAt = now
+        return t
+    }
+
+    public static func moveOutOfSomeday(_ task: TaskSnapshot, now: Date) -> TaskSnapshot {
+        var t = task
+        t.isSomeday = false
+        t.lastTouchedAt = now
+        return t
+    }
+}
+
+public enum SubtaskCommands {
+    public static func add(taskID: UUID, title: String, among existing: [SubtaskSnapshot], id: UUID = UUID()) -> SubtaskSnapshot? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let order = (existing.filter { $0.taskID == taskID }.map(\.order).max() ?? -1) + 1
+        return SubtaskSnapshot(id: id, taskID: taskID, title: trimmed, order: order)
+    }
+
+    public static func toggle(_ subtask: SubtaskSnapshot) -> SubtaskSnapshot {
+        var copy = subtask
+        copy.isDone.toggle()
+        return copy
     }
 }

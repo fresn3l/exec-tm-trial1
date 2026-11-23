@@ -127,4 +127,20 @@ struct PhaseTwoPersistenceTests {
         pins.clear()
         #expect(pins.pinnedTaskID == nil)
     }
+
+    @Test func rolloverSpawnsADueRoutineOnce() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let repo = TaskRepository(container: try ExecFnStoreFactory.make(in: dir).main)
+        let now = Date(timeIntervalSince1970: 1_763_640_000)
+        let template = RoutineTemplate(id: UUID(), title: "Dishes", schedule: .daily, checklist: ["Rinse"], isActive: true)
+        try repo.upsert(template)
+        let day = PlanDay(year: 2026, month: 11, day: 20)
+        let first = try #require(try repo.rollOverIfNeeded(today: day, now: now))
+        #expect(first.spawnedTasks.map(\.title) == ["Dishes"])
+        #expect(try repo.allSubtasks().map(\.title) == ["Rinse"])
+        #expect(try repo.rollOverIfNeeded(today: day, now: now) == nil)
+        let dishes = try repo.allTasks().filter { $0.routineID == template.id }
+        #expect(dishes.count == 1)
+    }
 }

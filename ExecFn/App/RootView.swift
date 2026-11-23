@@ -5,7 +5,7 @@ struct RootView: View {
     @Bindable var model: AppModel
     @State private var section: Section? = .today
 
-    enum Section: Hashable { case today, inbox, calendar }
+    enum Section: Hashable { case today, inbox, calendar, someday, routines }
 
     var body: some View {
         NavigationSplitView {
@@ -13,6 +13,8 @@ struct RootView: View {
                 Label("Today", systemImage: "sun.max").tag(Section.today)
                 Label("Inbox", systemImage: "tray").tag(Section.inbox)
                 Label("Calendar", systemImage: "calendar").tag(Section.calendar)
+                Label("Someday", systemImage: "archivebox").tag(Section.someday)
+                Label("Routines", systemImage: "repeat").tag(Section.routines)
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180)
         } detail: {
@@ -24,10 +26,15 @@ struct RootView: View {
                         .padding(10)
                         .background(.quaternary)
                 }
+                if let block = model.planner.passedBlock, let task = model.planner.task(block.taskID) {
+                    PassedTimePrompt(planner: model.planner, block: block, task: task)
+                }
                 switch section ?? .today {
                 case .today: TodayScreen(planner: model.planner)
                 case .inbox: InboxScreen(planner: model.planner)
                 case .calendar: DayScreen(model: model)
+                case .someday: SomedayScreen(planner: model.planner)
+                case .routines: RoutinesScreen(planner: model.planner)
                 }
             }
         }

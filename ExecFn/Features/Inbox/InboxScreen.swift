@@ -79,9 +79,11 @@ struct TaskRow: View {
                 Button("Make this Now") { planner.pin(task.id) }
                 Button("Just 5 minutes") { planner.startSession(task.id, mode: .fiveMinutes) }
                 Button("Edit…") { editing = true }
+                Button("Place on today") { planner.placeOnToday(task.id) }
                 if context == .today {
                     Button("Move off Today") { planner.removeFromToday(task.id) }
                 }
+                Button("Someday") { planner.moveToSomeday(task.id) }
                 Divider()
                 Button("Drop") { planner.drop(task.id) }
             } label: {
@@ -107,13 +109,59 @@ struct TaskEditor: View {
     @State private var title = ""
     @State private var firstStep = ""
     @State private var estimate = ""
+    @State private var selectedBucket: UUID?
+    @State private var newBucket = ""
+    @State private var newSubtask = ""
     @Environment(\.dismiss) private var dismiss
+
+    private var bucketSelection: Binding<UUID?> {
+        Binding(get: { selectedBucket }, set: { selectedBucket = $0 })
+    }
+
+    private var subtaskSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Steps").font(.caption).foregroundStyle(.secondary)
+            ForEach(planner.subtasks(for: task.id)) { item in
+                Button {
+                    planner.toggleSubtask(item.id)
+                } label: {
+                    Label(item.title, systemImage: item.isDone ? "checkmark.circle.fill" : "circle")
+                }
+                .buttonStyle(.borderless)
+            }
+            HStack {
+                TextField("Add a step", text: $newSubtask)
+                Button("Add") {
+                    planner.addSubtask(task.id, title: newSubtask)
+                    newSubtask = ""
+                }
+                .disabled(newSubtask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
 
     var body: some View {
         Form {
             TextField("Title", text: $title)
             TextField("First step", text: $firstStep, prompt: Text("Optional — the very first physical action"))
             TextField("Estimate (minutes)", text: $estimate, prompt: Text("Optional"))
+            Picker("Bucket", selection: bucketSelection) {
+                Text("None").tag(UUID?.none)
+                ForEach(planner.buckets) { bucket in
+                    Text(bucket.name).tag(Optional(bucket.id))
+                }
+            }
+            HStack {
+                TextField("New bucket", text: $newBucket)
+                Button("Add") {
+                    if let bucket = planner.createBucket(newBucket) {
+                        selectedBucket = bucket.id
+                        newBucket = ""
+                    }
+                }
+                .disabled(newBucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            subtaskSection
             HStack {
                 Spacer()
                 Button("Save") { save() }
@@ -126,12 +174,16 @@ struct TaskEditor: View {
             title = task.title
             firstStep = task.firstStep ?? ""
             estimate = task.estimateMinutes.map(String.init) ?? ""
+            selectedBucket = task.bucketID
         }
     }
 
     private func save() {
         let minutes = Int(estimate.trimmingCharacters(in: .whitespaces))
         planner.edit(task.id, title: title, firstStep: .some(firstStep), estimateMinutes: .some(minutes))
+        if selectedBucket != task.bucketID {
+            planner.assignBucket(task.id, selectedBucket)
+        }
         dismiss()
     }
 }

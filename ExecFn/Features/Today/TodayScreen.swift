@@ -9,7 +9,9 @@ struct TodayScreen: View {
             VStack(alignment: .leading, spacing: 24) {
                 NowCard(planner: planner)
                 CarriedRowView(planner: planner)
+                RoutineRowView(planner: planner)
                 mustsSection
+                freshStart
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
@@ -41,6 +43,11 @@ struct TodayScreen: View {
             .scrollDisabled(true)
             .frame(height: CGFloat(planner.musts.count) * 44)
 
+            if planner.canUndoFreshStart {
+                Button("Undo fresh start") { planner.undoFreshStart() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
             ForEach(planner.doneToday) { task in
                 Label(task.title, systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.secondary)
@@ -48,6 +55,10 @@ struct TodayScreen: View {
                     .padding(.leading, 4)
             }
         }
+    }
+
+    private var freshStart: some View {
+        FreshStartButton(planner: planner)
     }
 }
 

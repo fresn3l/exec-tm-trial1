@@ -3,6 +3,10 @@ import EFCore
 import EFPersistence
 import Observation
 
+private struct FreshStartEnvelope: Codable {
+    var tasks: [String: FreshStart.Fields]
+}
+
 /// Tasks, sessions, the pin, and rollover. Every write goes:
 /// snapshots → EFCore → repository (one context, D-01) → reload.
 @MainActor
@@ -11,8 +15,23 @@ final class PlannerModel {
     enum CaptureSource: String { case hotkey, app, menuBar }
 
     private(set) var tasks: [TaskSnapshot] = []
+    private(set) var blocks: [BlockSnapshot] = []
+    private(set) var sessions: [SessionSnapshot] = []
+    private(set) var routines: [RoutineTemplate] = []
+    private(set) var buckets: [BucketSnapshot] = []
+    private(set) var subtasks: [SubtaskSnapshot] = []
+    private(set) var annotations: [EventAnnotation] = []
     private(set) var openSession: SessionSnapshot?
     private(set) var pinnedTaskID: UUID?
+    /// Events for `scheduledDay`, so a proposal can avoid busy time.
+    var scheduledEvents: [ClassifiedEvent] = []
+    var scheduledDay: PlanDay?
+    /// A block the user has not accepted yet (D-11). Nothing is saved until they do.
+    var draft: BlockSnapshot?
+    /// A gap was tapped and Now is "Pick one", so the user chooses the task.
+    var gapAwaitingTask: Scheduling.Interval?
+    private(set) var freshStartSnapshot: [UUID: FreshStart.Fields]?
+    private(set) var freshStartAt: Date?
     /// Ticks every few seconds; drives check-in state and the menu bar label.
     private(set) var now = Date()
     /// Bumped on completion so views can play the D-21 animation.
@@ -53,20 +72,41 @@ final class PlannerModel {
 
     // MARK: Derived (D-03, D-06, D-07, D-08)
 
-    var inbox: [TaskSnapshot] { TodayRules.inbox(tasks: tasks) }
+    var inbox: [TaskSnapshot] { TodayRules.inbox(tasks: tasks, blocks: blocks) }
     var musts: [TaskSnapshot] { TodayRules.musts(tasks: tasks) }
     var doneToday: [TaskSnapshot] { TodayRules.doneToday(tasks: tasks, today: today, boundary: boundary) }
     var carriedRow: TodayRules.CarriedRow { TodayRules.carriedRow(tasks: tasks) }
+    var routinesToday: [TaskSnapshot] { TodayRules.routinesToday(tasks: tasks, today: today) }
+    var somedayTasks: [TaskSnapshot] { TodayRules.someday(tasks: tasks) }
     var cap: Int { TodayRules.cap(settings: settings) }
 
     var nowResult: NowRule.Result {
         NowRule.evaluate(
             tasks: tasks,
+            blocks: blocks,
             sessions: openSession.map { [$0] } ?? [],
             pinnedTaskID: pinnedTaskID,
             settings: settings,
             now: now
         )
+    }
+
+    var passedBlock: BlockSnapshot? {
+        BlockRules.pending(blocks: blocks, tasks: tasks, sessions: sessions, now: now).first
+    }
+
+    var canUndoFreshStart: Bool {
+        guard let freshStartAt else { return false }
+        return now.timeIntervalSince(freshStartAt) < 24 * 60 * 60
+    }
+
+    func subtasks(for taskID: UUID) -> [SubtaskSnapshot] {
+        subtasks.filter { $0.taskID == taskID }.sorted { $0.order < $1.order }
+    }
+
+    func bucket(for task: TaskSnapshot) -> BucketSnapshot? {
+        guard let id = task.bucketID else { return nil }
+        return buckets.first { $0.id == id }
     }
 
     func task(_ id: UUID?) -> TaskSnapshot? {
@@ -121,6 +161,7 @@ final class PlannerModel {
     func start() {
         reload()
         runRolloverIfNeeded(reason: "launch")
+        restoreFreshStartUndo()
         reconcileSession(reason: "launch")
         scheduleBoundaryTimer()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -172,13 +213,19 @@ final class PlannerModel {
         do {
             let since = boundary.start(of: boundary.planDay(containing: Date()))
             tasks = try repository.workingSet(since: since)
-            let sessions = try repository.openSessions().sorted { $0.start < $1.start }
+            blocks = try repository.allBlocks()
+            sessions = try repository.allSessions()
+            routines = try repository.allRoutines()
+            buckets = try repository.allBuckets()
+            subtasks = try repository.allSubtasks()
+            annotations = try repository.allAnnotations()
+            let open = try repository.openSessions().sorted { $0.start < $1.start }
             // Only one session runs at a time; older strays end as app-quit.
-            if sessions.count > 1 {
-                let strays = sessions.dropLast().map { SessionRules.end($0, at: $0.start, by: .appQuit) }
+            if open.count > 1 {
+                let strays = open.dropLast().map { SessionRules.end($0, at: $0.start, by: .appQuit) }
                 try repository.save(sessions: Array(strays))
             }
-            openSession = sessions.last
+            openSession = open.last
             if NowRule.evaluate(tasks: tasks, sessions: [], pinnedTaskID: pinnedTaskID, settings: settings, now: now).pinIsStale {
                 setPin(nil)
             }
@@ -384,12 +431,227 @@ final class PlannerModel {
         log(.checkInShown, task: s.taskID)
     }
 
+    // MARK: Scheduling (D-11, D-12, D-13)
+
+    func freeSlots(on day: PlanDay, events: [ClassifiedEvent]) -> [Scheduling.Interval] {
+        Scheduling.freeSlots(
+            events: events, blocks: blocks, annotations: annotations,
+            day: day, boundary: boundary, settings: settings
+        )
+    }
+
+    func tapTimeline(_ date: Date, on day: PlanDay, events: [ClassifiedEvent]) {
+        let slots = freeSlots(on: day, events: events)
+        guard let slot = Scheduling.slot(containing: date, in: slots) else { return }
+        if let id = nowResult.now?.taskID, let task = task(id) {
+            draft = Scheduling.propose(task: task, in: slot, settings: settings)
+            gapAwaitingTask = nil
+        } else {
+            draft = nil
+            gapAwaitingTask = slot
+        }
+    }
+
+    func chooseTaskForGap(_ id: UUID) {
+        guard let gap = gapAwaitingTask, let chosen = task(id) else { return }
+        draft = Scheduling.propose(task: chosen, in: gap, settings: settings)
+        gapAwaitingTask = nil
+    }
+
+    func acceptDraft() {
+        guard let draft else { return }
+        persist(blocks: [draft])
+        log(.blockCreated, task: draft.taskID, ["source": "tapGap"])
+        self.draft = nil
+    }
+
+    func cancelDraft() {
+        draft = nil
+        gapAwaitingTask = nil
+    }
+
+    /// Proposes the next free gap today. The block is still a draft until accepted.
+    func placeOnToday(_ id: UUID) {
+        guard let chosen = task(id) else { return }
+        let events = scheduledDay == today ? scheduledEvents : []
+        let slots = freeSlots(on: today, events: events)
+        let minutes = (chosen.estimateMinutes ?? 0) > 0 ? chosen.estimateMinutes! : settings.defaultBlockMinutes
+        guard let slot = Scheduling.nextSlot(
+            fitting: minutes, after: now,
+            in: slots, snapMinutes: settings.proposalSnapMinutes, calendar: boundary.calendar
+        ) else {
+            problem = String(localized: "The day is full.")
+            return
+        }
+        problem = nil
+        draft = Scheduling.propose(task: chosen, in: slot, settings: settings)
+        gapAwaitingTask = nil
+    }
+
+    func moveBlock(_ id: UUID, toStart: Date) {
+        guard let block = blocks.first(where: { $0.id == id }) else { return }
+        let moved = Scheduling.moved(block, toStart: toStart, settings: settings, calendar: boundary.calendar)
+        guard moved.start != block.start else { return }
+        persist(blocks: [moved])
+        log(.blockCreated, task: moved.taskID, ["source": "drag"])
+    }
+
+    func resizeBlock(_ id: UUID, toEnd: Date) {
+        guard let block = blocks.first(where: { $0.id == id }) else { return }
+        let resized = Scheduling.resized(block, toEnd: toEnd, settings: settings, calendar: boundary.calendar)
+        guard resized.end != block.end else { return }
+        persist(blocks: [resized])
+        log(.blockCreated, task: resized.taskID, ["source": "drag"])
+    }
+
+    func leavePassed() {
+        guard let block = passedBlock else { return }
+        persist(blocks: [BlockRules.leave(block)])
+        log(.blockResolved, task: block.taskID, ["resolution": BlockResolution.unscheduled.rawValue])
+    }
+
+    func markPassedDone() {
+        guard let block = passedBlock else { return }
+        let result = BlockRules.didIt(block)
+        persist(sessions: [result.session], blocks: [result.block])
+        log(.blockResolved, task: block.taskID, ["resolution": BlockResolution.didIt.rawValue])
+    }
+
+    /// False when today has no gap long enough. The prompt then offers to leave the block unscheduled.
+    @discardableResult
+    func reschedulePassed() -> Bool {
+        guard let block = passedBlock else { return false }
+        let events = scheduledDay == today ? scheduledEvents : []
+        let slots = freeSlots(on: today, events: events)
+        let minutes = max(settings.proposalSnapMinutes, Int(block.end.timeIntervalSince(block.start) / 60))
+        guard let slot = Scheduling.nextSlot(
+            fitting: minutes, after: now, in: slots,
+            snapMinutes: settings.proposalSnapMinutes, calendar: boundary.calendar
+        ), let pair = BlockRules.reschedule(block, into: slot, settings: settings) else {
+            return false
+        }
+        persist(blocks: [pair.old, pair.new])
+        log(.blockResolved, task: block.taskID, ["resolution": BlockResolution.rescheduled.rawValue])
+        log(.blockCreated, task: pair.new.taskID, ["source": "proposal"])
+        return true
+    }
+
+    // MARK: Buckets, subtasks, someday
+
+    func createBucket(_ name: String) -> BucketSnapshot? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let bucket = BucketSnapshot(id: UUID(), name: trimmed, order: buckets.count)
+        persist(buckets: [bucket])
+        return buckets.first { $0.id == bucket.id } ?? bucket
+    }
+
+    func assignBucket(_ taskID: UUID, _ bucketID: UUID?) {
+        guard let current = task(taskID) else { return }
+        persist(tasks: [TaskCommands.setBucket(current, bucketID, now: Date())])
+        log(.taskEdited, task: taskID, ["bucket": bucketID?.uuidString ?? ""])
+    }
+
+    func addSubtask(_ taskID: UUID, title: String) {
+        guard let subtask = SubtaskCommands.add(taskID: taskID, title: title, among: subtasks) else { return }
+        persist(subtasks: [subtask])
+        log(.taskEdited, task: taskID, ["subtask": "add"])
+    }
+
+    func toggleSubtask(_ id: UUID) {
+        guard let subtask = subtasks.first(where: { $0.id == id }) else { return }
+        persist(subtasks: [SubtaskCommands.toggle(subtask)])
+        log(.taskEdited, task: subtask.taskID, ["subtask": "toggle"])
+    }
+
+    func moveToSomeday(_ id: UUID) {
+        guard let current = task(id) else { return }
+        persist(tasks: [TaskCommands.moveToSomeday(current, now: Date())])
+        log(.taskEdited, task: id, ["someday": "true"])
+        clearPinIfNeeded(id)
+    }
+
+    func moveOutOfSomeday(_ id: UUID) {
+        guard let current = task(id) else { return }
+        persist(tasks: [TaskCommands.moveOutOfSomeday(current, now: Date())])
+        log(.taskEdited, task: id, ["someday": "false"])
+    }
+
+    // MARK: Routines (D-20)
+
+    /// Saves the template. If it is due today and has no instance yet, that instance is created now.
+    func saveRoutine(_ template: RoutineTemplate) {
+        var spawned: [TaskSnapshot] = []
+        var spawnedSubtasks: [SubtaskSnapshot] = []
+        if let instance = RoutineRules.spawn(template, on: today, existing: tasks, now: Date()) {
+            spawned = [instance.task]
+            spawnedSubtasks = instance.subtasks
+        }
+        persist(tasks: spawned, subtasks: spawnedSubtasks, routines: [template])
+        log(.taskEdited, task: spawned.first?.id, ["routine": template.id.uuidString])
+    }
+
+    // MARK: Fresh start (D-15)
+
+    func freshStart(moveUntouchedToSomeday: Bool) {
+        let result = FreshStart.apply(
+            tasks: tasks, moveUntouchedToSomeday: moveUntouchedToSomeday, settings: settings, now: Date()
+        )
+        persist(tasks: result.changedTasks)
+        freshStartSnapshot = result.snapshot
+        freshStartAt = Date()
+        let envelope = FreshStartEnvelope(tasks: Dictionary(uniqueKeysWithValues: result.snapshot.map { ($0.key.uuidString, $0.value) }))
+        let encoded = (try? JSONEncoder().encode(envelope)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        log(.freshStart, task: nil, [
+            "snapshot": encoded,
+            "moveUntouched": moveUntouchedToSomeday ? "true" : "false",
+            "changed": String(result.changedTasks.count),
+        ])
+    }
+
+    func undoFreshStart() {
+        guard canUndoFreshStart, let snapshot = freshStartSnapshot else { return }
+        let changed = FreshStart.undo(tasks: tasks, snapshot: snapshot)
+        persist(tasks: changed)
+        freshStartSnapshot = nil
+        freshStartAt = nil
+        log(.freshStartUndone, task: nil, ["restored": String(changed.count)])
+    }
+
+    private func restoreFreshStartUndo() {
+        guard let activity else { return }
+        guard let start = try? activity.latest(kind: .freshStart) else { return }
+        if let undone = try? activity.latest(kind: .freshStartUndone), undone.at >= start.at { return }
+        guard Date().timeIntervalSince(start.at) < 24 * 60 * 60,
+              let raw = start.payload["snapshot"]?.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(FreshStartEnvelope.self, from: raw)
+        else { return }
+        var snapshot: [UUID: FreshStart.Fields] = [:]
+        for (key, fields) in envelope.tasks {
+            if let id = UUID(uuidString: key) { snapshot[id] = fields }
+        }
+        freshStartSnapshot = snapshot
+        freshStartAt = start.at
+    }
+
     // MARK: Plumbing
 
-    private func persist(tasks changed: [TaskSnapshot] = [], sessions: [SessionSnapshot] = []) {
-        guard let repository, !(changed.isEmpty && sessions.isEmpty) else { return }
+    private func persist(
+        tasks changed: [TaskSnapshot] = [],
+        sessions: [SessionSnapshot] = [],
+        blocks changedBlocks: [BlockSnapshot] = [],
+        subtasks changedSubtasks: [SubtaskSnapshot] = [],
+        buckets changedBuckets: [BucketSnapshot] = [],
+        routines changedRoutines: [RoutineTemplate] = []
+    ) {
+        let empty = changed.isEmpty && sessions.isEmpty && changedBlocks.isEmpty
+            && changedSubtasks.isEmpty && changedBuckets.isEmpty && changedRoutines.isEmpty
+        guard let repository, !empty else { return }
         do {
-            try repository.save(tasks: changed, sessions: sessions)
+            try repository.save(
+                tasks: changed, sessions: sessions, blocks: changedBlocks,
+                subtasks: changedSubtasks, buckets: changedBuckets, routines: changedRoutines
+            )
         } catch {
             problem = String(localized: "That change didn't save. Try again.")
         }
