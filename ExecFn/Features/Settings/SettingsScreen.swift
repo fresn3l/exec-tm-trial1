@@ -1,4 +1,5 @@
 import EFCore
+import ServiceManagement
 import SwiftUI
 
 struct SettingsScreen: View {
@@ -64,6 +65,12 @@ struct SettingsScreen: View {
             }
 
             Section {
+                LaunchAtLoginToggle()
+            } header: {
+                Text("General")
+            }
+
+            Section {
                 Button("Export activity log") { model.exportActivityLog() }
             } header: {
                 Text("Activity log")
@@ -76,15 +83,15 @@ struct SettingsScreen: View {
     private var accessCopy: String {
         switch model.calendar.access {
         case .full:
-            return "Calendar access is on."
+            return String(localized: "Calendar access is on.")
         case .denied:
-            return "Calendar access is off. The day still works without events."
+            return String(localized: "Calendar access is off. The day still works without events.")
         case .restricted:
-            return "Calendar access is restricted on this Mac."
+            return String(localized: "Calendar access is restricted on this Mac.")
         case .writeOnly:
-            return "Calendar access is write-only. Full access is what shows events."
+            return String(localized: "Calendar access is write-only. Full access is what shows events.")
         case .unknown, .notDetermined:
-            return "Checking calendar access"
+            return String(localized: "Checking calendar access")
         }
     }
 
@@ -97,6 +104,34 @@ struct SettingsScreen: View {
             Button("Open System Settings") { model.openCalendarSettings() }
         case .unknown, .full:
             EmptyView()
+        }
+    }
+}
+
+/// Phase 2: launch at login via `SMAppService.mainApp`.
+struct LaunchAtLoginToggle: View {
+    @State private var enabled = SMAppService.mainApp.status == .enabled
+    @State private var note: String?
+
+    var body: some View {
+        Toggle("Open ExecFn at login", isOn: Binding(
+            get: { enabled },
+            set: { newValue in
+                do {
+                    if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                    note = nil
+                } catch {
+                    note = String(localized: "macOS didn't accept that change. You can set it in System Settings → General → Login Items.")
+                }
+                enabled = SMAppService.mainApp.status == .enabled
+            }
+        ))
+        if SMAppService.mainApp.status == .requiresApproval {
+            Text("Waiting for approval in System Settings → General → Login Items.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        if let note {
+            Text(note).font(.caption).foregroundStyle(.secondary)
         }
     }
 }

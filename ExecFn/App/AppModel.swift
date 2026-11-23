@@ -15,6 +15,9 @@ final class AppModel {
     private var recordedAccess: CalendarService.Access?
     var storeProblem: String?
     var exportMessage: String?
+    /// Tasks, sessions, pin, rollover. Shares the main store's one context (D-01).
+    private(set) var planner: PlannerModel!
+    private var started = false
 
     init() {
         let store = SettingsStore.appGroup()
@@ -23,12 +26,30 @@ final class AppModel {
         settings = loaded
         let opening = DayBoundary(hour: loaded.dayBoundaryHour, timeZone: .current)
         selectedDay = opening.planDay(containing: Date())
+        var repository: TaskRepository?
         do {
             let opened = try ExecFnStoreFactory.make()
             activityLog = ActivityLog(container: opened.activity)
+            repository = TaskRepository(container: opened.main)
         } catch {
             storeProblem = String(localized: "The local store didn't open.")
         }
+        planner = PlannerModel(
+            repository: repository,
+            activity: activityLog,
+            pins: .appGroup(),
+            settings: { [unowned self] in self.settings }
+        )
+    }
+
+    /// Start of the next timed, non-hidden event today, for the menu bar (D-25).
+    var nextEventStart: Date? {
+        guard selectedDay == today else { return nil }
+        return StatusLine.nextEventStart(
+            events: dayContent.timed.map(\.event),
+            now: planner.now,
+            dayEnd: boundary.end(of: today)
+        )
     }
 
     var boundary: DayBoundary {
@@ -56,6 +77,9 @@ final class AppModel {
     }
 
     func start() async {
+        guard !started else { return }
+        started = true
+        planner.start()
         await calendar.prepare(requestingIfNeeded: true)
         recordAccessIfNeeded()
         show(selectedDay)

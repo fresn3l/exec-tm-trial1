@@ -28,7 +28,7 @@ public enum ExecFnStoreFactory {
 
     public static func make(in directory: URL, usedAppGroup: Bool = false) throws -> OpenedStores {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let mainSchema = Schema(versionedSchema: ExecFnSchemaV1.self)
+        let mainSchema = Schema(versionedSchema: ExecFnSchemaLatest.self)
         let activitySchema = Schema(versionedSchema: ActivitySchemaV1.self)
         let mainConfiguration = ModelConfiguration(
             "Main",

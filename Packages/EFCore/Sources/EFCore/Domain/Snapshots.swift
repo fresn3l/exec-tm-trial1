@@ -148,6 +148,11 @@ public enum SessionEnd: String, Codable, Sendable, Hashable {
     case user, autoEnded, appQuit
 }
 
+/// D-27: how a session was started.
+public enum SessionStartMode: String, Codable, Sendable, Hashable {
+    case standard, fiveMinutes
+}
+
 public struct SessionSnapshot: Identifiable, Hashable, Sendable {
     public var id: UUID
     public var taskID: UUID
@@ -155,10 +160,18 @@ public struct SessionSnapshot: Identifiable, Hashable, Sendable {
     public var end: Date?
     public var kind: SessionKind
     public var endedBy: SessionEnd?
+    public var startMode: SessionStartMode
+    /// When the last check-in was answered "keep going". The next check-in counts from here (D-14).
+    /// `nil` = no check-in answered yet; the first one counts from `start`.
+    public var checkInAnchor: Date?
 
+    /// A 5-minute start stopped at its first prompt says nothing about the estimate, so it's excluded.
     public var isEstimatorEligible: Bool {
-        kind == .timed && endedBy == .user && end != nil
+        guard kind == .timed, endedBy == .user, end != nil else { return false }
+        return !(startMode == .fiveMinutes && checkInAnchor == nil)
     }
+
+    public var isOpen: Bool { end == nil }
 
     public init(
         id: UUID,
@@ -166,7 +179,9 @@ public struct SessionSnapshot: Identifiable, Hashable, Sendable {
         start: Date,
         end: Date? = nil,
         kind: SessionKind,
-        endedBy: SessionEnd? = nil
+        endedBy: SessionEnd? = nil,
+        startMode: SessionStartMode = .standard,
+        checkInAnchor: Date? = nil
     ) {
         self.id = id
         self.taskID = taskID
@@ -174,6 +189,8 @@ public struct SessionSnapshot: Identifiable, Hashable, Sendable {
         self.end = end
         self.kind = kind
         self.endedBy = endedBy
+        self.startMode = startMode
+        self.checkInAnchor = checkInAnchor
     }
 }
 

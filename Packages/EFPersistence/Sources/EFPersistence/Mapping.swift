@@ -83,6 +83,8 @@ enum SnapshotMapper {
         model.end = snapshot.end
         model.kindRaw = snapshot.kind.rawValue
         model.endedByRaw = snapshot.endedBy?.rawValue
+        model.startModeRaw = snapshot.startMode.rawValue
+        model.checkInAnchor = snapshot.checkInAnchor
     }
 
     static func session(from model: SessionModel) -> SessionSnapshot {
@@ -92,7 +94,9 @@ enum SnapshotMapper {
             start: model.start,
             end: model.end,
             kind: SessionKind(rawValue: model.kindRaw) ?? .timed,
-            endedBy: model.endedByRaw.flatMap(SessionEnd.init(rawValue:))
+            endedBy: model.endedByRaw.flatMap(SessionEnd.init(rawValue:)),
+            startMode: SessionStartMode(rawValue: model.startModeRaw) ?? .standard,
+            checkInAnchor: model.checkInAnchor
         )
     }
 

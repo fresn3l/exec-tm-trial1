@@ -62,6 +62,8 @@ final class SessionModel {
     var end: Date?
     var kindRaw: String = "timed"
     var endedByRaw: String?
+    var startModeRaw: String = "standard"    // v2 (D-27)
+    var checkInAnchor: Date?                 // v2 (D-14)
     var task: TaskModel? = nil
 
     init() {}
@@ -112,6 +114,7 @@ final class DayPlanModel {
     var day: Int = 1
     var modeRaw: String = "ideal"
     var energyRaw: String?
+    var rolledOverAt: Date?                  // v2 (D-05): rollover marker, saved with the rollover changes
 
     init() {}
 }

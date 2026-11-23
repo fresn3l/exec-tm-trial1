@@ -22,27 +22,30 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Architecture
 
 ### D-01 · Domain is value types; persistence is a separate adapter
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** `EFCore` contains only structs and enums (`TaskSnapshot`, `PlanProposal`, `PlannedNotification`, `PlannerSettings`, …), which are `Sendable` and have no SwiftData, SwiftUI, EventKit, or UserNotifications imports. `EFPersistence` holds the `@Model` classes, mappers between models and snapshots, and a repository. Views may **read** via `@Query`. All **writes** go through repository commands: load snapshots → call `EFCore` → apply the returned changes.
 **Why:** Pure functions need plain values. `@Model` classes are context-bound reference types and aren't `Sendable`, which fights Swift 6 strict concurrency, and tests would need a `ModelContainer`.
-**Rejected:** `@Model` as the domain (conflicts with testability and concurrency). Dropping `@Query` entirely (forces hand-rolled observation for little gain).
+**One context:** the app reads and writes the main store through a single `ModelContext`, `container.mainContext`. The repository is handed that context; it does not create its own. Views (`@Query`), the focus timer, and repository commands therefore see the same objects. The activity store keeps its own context (different container).
+**Rejected:** `@Model` as the domain (conflicts with testability and concurrency). Dropping `@Query` entirely (forces hand-rolled observation for little gain). A private context per repository (drifts from `@Query` as soon as the view and the timer both touch a session).
 **Revisit if:** mapping boilerplate becomes the main source of bugs.
 
 ### D-02 · Activity log lives in a local-only store
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** `ActivityEvent` goes in a second SwiftData `ModelContainer` with `cloudKitDatabase: .none`, in the App Group container (SQLite underneath, so app, widgets and intents can all write safely). Provide CSV/JSONL export for DuckDB or pandas. Each device keeps its own log.
 **Why:** High-volume append-only events in the synced store bloat CloudKit, create conflicts, and complicate migrations. Per-device logs answer "where did I act?" in Phase 7.
 **Rejected:** Same store as tasks. Raw JSONL file (multi-process appends need file coordination).
 
 ### D-03 · Task status is `open | done | dropped`; Inbox is derived
-**Status:** Proposed
-**Decision:** No `inbox` or `active` status. A task is **in the Inbox** when it is `open`, has no bucket, is not a Today must, has no time block, is not a routine instance, and is not Someday. `dropped` carries a reason (`user`, `routineExpired`).
+**Status:** Accepted (2026-11-20; in use since Phase 1)
+**Decision:** No `inbox` or `active` status. A task is **in the Inbox** when it is `open`, has no bucket, is not a Today must, has no time block, is not a routine instance, is not Someday, and is not carried (`carriedFrom == nil`). A carried task shows only in the "From yesterday" row (D-06); once `carriedFrom` clears it can appear in the Inbox. `dropped` carries a reason (`user`, `routineExpired`).
 **Why:** Removes the undefined "when does a task become active" transition. Fewer states, fewer rules to get wrong.
 **Rejected:** Explicit `inbox → active` transition triggered by Today, Start, or a block (three triggers, easy to get inconsistent).
 
 ### D-04 · One `PlannerSettings` struct feeds every pure function
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** A single `Codable` struct holds all tunables (see the table at the end). It's stored in App Group `UserDefaults` and passed explicitly into every `EFCore` function. The UI edits it; nothing else does.
+**Settings only, not app state:** the pinned task (D-08) and the rollover marker (D-05) are not settings and do not go in this struct.
+**Decoding is tolerant:** `PlannerSettings` has a hand-written `init(from:)` that reads every field with `decodeIfPresent` and keeps the default when a field is missing. The synthesized decoder fails on any missing non-optional field, and `SettingsStore.load()` then falls back to `.standard`, silently discarding saved calendar modes. A test decodes the Phase 1 JSON shape after every field addition.
 **Why:** Stops planner signatures changing every phase. Makes every test fully specified.
 
 ---
@@ -50,14 +53,21 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Daily loop
 
 ### D-05 · Day boundary at 4:00 AM; rollover runs once per gap
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** The plan day starts at `dayBoundaryHour` (default 4). Rollover runs on launch, on wake, and at the boundary. It is **idempotent**, keyed by `lastRolloverDay`: after a 9-day absence it runs once from the last active day to today, not 9 times.
+- **Where the marker lives:** in the main store, written in the **same `save()`** as the rollover changes. Implemented as `DayPlanModel.rolledOverAt` on the new day's `DayPlanModel` (schema v2, lightweight migration); `lastRolloverDay` = the latest day with `rolledOverAt != nil`. Rollover fetches the day's `DayPlanModel` before inserting one (no unique constraints under CloudKit rules). Not in UserDefaults: a crash between a store save and a defaults write would run rollover twice (double `rolloverCount`, a second carried row), and in Phase 7 a per-device marker would re-roll synced tasks.
+- **Boundary trigger:** nothing in the system fires at 4 AM. A one-shot timer is scheduled for the next boundary and re-armed after each rollover, on wake (`NSWorkspace.didWakeNotification`), and on time-zone / clock changes (`NSSystemTimeZoneDidChange`, `NSSystemClockDidChange`).
+- **Pause days:** day modes arrive in Phase 4a. Until then every previous day counts as non-pause.
 **Why:** Most adults with ADHD run on a delayed sleep cycle, so midnight splits real days. Multiple runs would inflate `rolloverCount` and create phantom carried rows.
 
 ### D-06 · Rollover shows a non-blocking "From yesterday" row
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** At rollover, unfinished Today musts become `isTodayMust = false`, `carriedFrom = previousActiveDay`, `rolloverCount += 1` (no increment if the previous day was a pause day). Today shows a **"From yesterday"** row at the top:
 - Per item: **Today** · **Later** · **Drop**. One action: **Keep all as Later**.
+  - **Today** → `isTodayMust = true`, `carriedFrom = nil` (goes through the D-07 cap prompt).
+  - **Later** → `carriedFrom = nil`; the task is now in the Inbox (D-03).
+  - **Drop** → `dropped(.user)`, `carriedFrom = nil`.
+- Carried tasks are not in the Inbox while `carriedFrom` is set (D-03), so nothing appears in two places.
 - At most 3 visible, then "+N more". No red, no counts in a badge.
 - Untouched items: at the *next* rollover, `carriedFrom` clears (they become Later). They never accumulate in this row.
 - Hidden on pause days. Routine instances never appear here (D-20).
@@ -66,12 +76,12 @@ Default numbers are starting points, not research findings. Tune them with Activ
 **Rejected:** Silent removal from Today (v1 of the architecture). A modal triage on launch (puts a chore between you and capture, and hits hardest after a bad stretch).
 
 ### D-07 · Today cap = 3 musts, suggested not enforced
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** Marking a 4th must shows "Today already has 3. Swap one?" with the option to proceed anyway. The cap is adjusted by energy (D-16) and day mode.
 **Why:** One-thing-at-a-time without blocking the user (negotiate, don't enforce).
 
 ### D-08 · "Now" selection is deterministic
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** First match wins:
 1. Task with a running work session
 2. Pinned task (user tapped "Make this Now")
@@ -81,6 +91,8 @@ Default numbers are starting points, not research findings. Tune them with Activ
 6. Empty state: "Pick one" with up to 3 candidates (musts, then due-soonest, then oldest)
 
 "Next" = the next match after excluding the Now task.
+
+**The pin:** one `pinnedTaskID: UUID?` stored on its own UserDefaults key in the App Group (not in `PlannerSettings`, not a flag on every task). Set by "Make this Now". Cleared by Done, Drop, an explicit Unpin, and **rollover** (yesterday's pin must not outrank today's musts). Survives relaunch within the same plan day. A pin to a task that is no longer open is ignored and cleared. A running session (step 1) still outranks it.
 **Why:** Phases 2–5 need a fixed rule. Scored pick-for-me (Phase 6) only replaces step 6.
 
 ---
@@ -88,12 +100,12 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Calendar
 
 ### D-09 · Per-calendar mode: Hidden / Visible / Busy
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** Each EventKit calendar has a mode. **Busy** events block free-slot logic. **Visible** events render but don't block. **Hidden** events aren't shown. Defaults: Birthdays, holiday calendars, and subscribed calendars → Visible; everything else → Busy. Stored in `PlannerSettings` keyed by `calendarIdentifier`, with calendar title as a fallback match (identifiers can change after a full resync).
 **Why:** Without it, birthdays and holidays fill every day and back-planning finds no free time. It must exist before any free-slot logic, so it ships in Phase 1.
 
 ### D-10 · All-day events never occupy time slots by default
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** All-day events render in an all-day strip and don't block time, **unless** `availability` is `.busy` or `.unavailable` (e.g., "Out of office"). If the source reports `.notSupported`, treat as free. Timed events block if their calendar is Busy and `availability != .free`.
 **Why:** Otherwise one all-day event blocks the entire day for proposals and the now line.
 
@@ -116,7 +128,7 @@ Default numbers are starting points, not research findings. Tune them with Activ
 **Why:** The app proposes, the user decides.
 
 ### D-17 · Travel and buffers
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** `defaultBufferMinutes` (10) in settings, applied between busy items for proposals and transition alerts. Per-event overrides (travel minutes, transition alerts on/off) live in `EventAnnotation`, keyed by `calendarItemExternalIdentifier` + occurrence start date. **Not** keyed by `eventIdentifier`, which can change when an event moves calendars. Verify in Phase 1 whether EventKit exposes Calendar.app's travel time (assumed not).
 **Why:** "Leave by" and auto-buffers were in the research but had nowhere to live.
 
@@ -137,12 +149,19 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Focus & sessions
 
 ### D-14 · Hyperfocus check-in doubles as the runaway-session cap
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** During a work session, ask "Still on this?" at `estimate × 1.5`, or 45 min when there's no estimate. **Yes** → next check-in after the same interval. No answer within 45 min of a check-in → session auto-ends, `end = check-in time`, `endedBy = autoEnded`, excluded from the estimator.
+**Delivery (Phase 2):** a check-in is shown in the floating timer **and** as a local notification ("Still on this?" with Yes · Done · Stop actions). Someone in hyperfocus is not looking at the ExecFn window; an in-app-only prompt would auto-end real work and drop it from the estimator. Phase 2 ships a minimal `NotificationService` that handles only the check-in category; it is still the only code that calls `UNUserNotificationCenter`. The full `NotificationPlanner` (budget, escalation, quiet hours) arrives in Phase 4a; check-ins are exempt from quiet hours and the budget because the user started the session.
+**Sleep and quit:** deadlines are evaluated from timestamps on wake and launch, not only by timers. If the Mac slept past check-in + grace, the session ends at the check-in time as `autoEnded`. A session still open at quit ends as `appQuit` at quit time.
 **Why:** Restores the research's hyperfocus check-in and closes the nil-estimate hole in the runaway cap with one mechanism.
 
+### D-27 · "Just 5 minutes" ships in Phase 2
+**Status:** Accepted (2026-11-20)
+**Decision:** Next to **Start**, a **Just 5 minutes** action starts a normal timed session whose first check-in comes at 5 minutes instead of the D-14 interval. The 5-minute prompt is "Keep going?" with **Keep going** (the check-in schedule then follows D-14 from that point) and **Stop here**, which ends it as `endedBy = user`, with no follow-up nudge. Logged as `sessionStarted(mode: fiveMinutes)`.
+**Why:** Daily use starts at the end of Phase 2, and a session you are allowed to stop is the research's cheapest way to start. Without it, Start is open-ended and the first help comes at a 45-minute check-in. Moved forward from Phase 3; subtasks and drag-scheduling stay there.
+
 ### D-21 · Completion feedback is in v1
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** On completion: a short animation, a haptic via `NSHapticFeedbackManager` (only felt on a Force Touch trackpad with a finger on it), and an optional sound (off by default).
 **Why:** Cheap, and it matches the reward-sensitivity evidence better than themes or gamification.
 
@@ -194,19 +213,36 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ## Platform
 
 ### D-22 · Calendar access denied → full task-manager mode
-**Status:** Proposed
+**Status:** Accepted (2026-11-20; in use since Phase 1)
 **Decision:** If EventKit access is denied or restricted, everything except calendar events still works: capture, Now, Today, blocks on an empty timeline, notifications. Settings shows the access state and a button to open System Settings.
 
 ### D-24 · Phase 7 priority is decided by measured presence
-**Status:** Proposed
+**Status:** Accepted (2026-11-20)
 **Decision:** Log presence intervals (`active | idle >5 min | locked | asleep`) from wake/sleep, lock/unlock, and idle-time checks. Log every planned notification's fire time. After 2–3 weeks of Phase 4a, compute **% of notifications due while away from the Mac**. A high share moves Phase 7 up.
 **Caveat:** the screen lock/unlock notifications are undocumented distributed notifications, and idle-time APIs must be verified inside the sandbox.
 **Why:** The Mac-only build is a weak test if failures happen away from the desk. This turns "move iOS up?" into a number.
 **Known cost:** an iPhone app without sync is an island, so iOS earlier means CloudKit and the paid program earlier.
 
 ### D-25 · Menu-bar countdown is a Phase 0 spike
-**Status:** Proposed
-**Decision:** Before Phase 2, prototype a live-updating menu bar label. Try `MenuBarExtra` (`.window` style) with a minute-resolution label first; fall back to AppKit `NSStatusItem` if the label doesn't update reliably. Minutes in the bar; seconds only in the popover/timer. Same spike: the capture `NSPanel` with `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, and a subclass overriding `canBecomeKey` so it accepts typing over full-screen apps.
+**Status:** Accepted (2026-11-20)
+**Decision:** On the first day of Phase 2, before the menu bar or presence logger is designed, prototype a live-updating menu bar label. Try `MenuBarExtra` (`.window` style) with a minute-resolution label first; fall back to AppKit `NSStatusItem` if the label doesn't update reliably. Minutes in the bar; seconds only in the popover/timer. Same spike: the capture `NSPanel` with `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, and a subclass overriding `canBecomeKey` so it accepts typing over full-screen apps; and the D-24 presence signals from inside the sandbox. Results are recorded under **Phase 0 results** below. Capture, Now, and rollover don't depend on the spike and can be built either way.
+
+**What the menu bar shows** (minute resolution, never red):
+| State | Label | Popover |
+|-------|-------|---------|
+| Session running, task has an estimate | Task title · minutes left on the estimate; once past it, elapsed minutes (`+12m`), no colour change | Timer with seconds, next check-in, next event |
+| Session running, no estimate | Task title · elapsed minutes | Timer with seconds, next check-in, next event |
+| No session, Now task exists | Now task title · minutes until the next event (if calendar access and an event today) | Now / Next, next event |
+| No session, nothing in Now | App icon only | "Pick one" (D-08 step 6) |
+
+The check-in countdown is not shown in the bar: it is an internal mechanism, not something the user set.
+
+**Phase 0 results** (spike: `Spikes/MenuBarCountdown`, run `./build.sh` then `open Spike.app`; it's sandboxed, ad-hoc signed, and logs to `~/Library/Containers/com.execfn.spike/Data/Library/Application Support/spike.log`):
+- Menu bar label ticks with `MenuBarExtra(.window)`: **yes (2026-11-20, macOS 26)**. A label driven by a published counter updated in step with an `NSStatusItem` across app switches, with the popover closed. Still to check: it keeps ticking after the popover has been opened and closed. → using `MenuBarExtra` unless that fails.
+- Global hotkey registers from the sandbox (Carbon `RegisterEventHotKey`, ⌃⌥Space): **yes**.
+- Capture panel accepts typing over a full-screen app without activating ExecFn: ☐ yes ☐ no → notes: ____
+- Idle seconds readable in the sandbox (`CGEventSource.secondsSinceLastEventType`): returns a value; ☐ confirmed it rises past 60 s when idle.
+- Sandboxed app sees lock/unlock (`com.apple.screenIsLocked` / `…Unlocked`): ☐ yes ☐ no → if no, D-24 logs sleep/wake (+ idle if readable) only.
 
 ---
 
@@ -215,7 +251,7 @@ Default numbers are starting points, not research findings. Tune them with Activ
 ### D-26 · Not in v1
 **Status:** Proposed
 **Decision:** Explicitly out until data says otherwise: reward pairing, novelty/quest themes, wind-down reminders, body doubling / focus rooms, accountability partners, Apple Calendar mirror (D-23), streaks of any kind, iOS/Watch (Phase 7), CloudKit sync (Phase 7).
-**In v1 despite being small:** hyperfocus check-in (D-14), completion feedback (D-21), routines (D-20).
+**In v1 despite being small:** hyperfocus check-in (D-14), completion feedback (D-21), routines (D-20), "just 5 minutes" (D-27).
 
 ---
 
@@ -233,6 +269,7 @@ Default numbers are starting points, not research findings. Tune them with Activ
 | `checkInMultiplier` | 1.5 | D-14 |
 | `checkInNoEstimateMinutes` | 45 | D-14 |
 | `checkInGraceMinutes` | 45 | D-14 |
+| `fiveMinuteStartMinutes` | 5 | D-27 |
 | `comebackGapDays` | 3 | D-18 |
 | `somedayAfterDays` | 30 | D-15 |
 | `estimatorMinSamples` | 5 | Estimator |

@@ -5,8 +5,10 @@ import SwiftData
 @MainActor
 public final class ActivityLog {
     private let context: ModelContext
+    private let container: ModelContainer   // keep alive for the context's lifetime
 
     public init(container: ModelContainer) {
+        self.container = container
         self.context = ModelContext(container)
     }
 

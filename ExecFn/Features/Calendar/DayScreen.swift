@@ -237,16 +237,16 @@ struct DayScreen: View {
     private var accessNotice: String? {
         switch model.calendar.access {
         case .unknown, .notDetermined:
-            return "Checking calendar access"
+            return String(localized: "Checking calendar access")
         case .denied:
-            return "Calendar access is off. The day still works without events."
+            return String(localized: "Calendar access is off. The day still works without events.")
         case .restricted:
-            return "Calendar access is restricted on this Mac."
+            return String(localized: "Calendar access is restricted on this Mac.")
         case .writeOnly:
-            return "Calendar access is write-only. Full access is what shows events."
+            return String(localized: "Calendar access is write-only. Full access is what shows events.")
         case .full:
             return model.dayContent.allDay.isEmpty && model.dayContent.timed.isEmpty
-                ? "Nothing on this day from the calendars you're showing."
+                ? String(localized: "Nothing on this day from the calendars you're showing.")
                 : nil
         }
     }
