@@ -284,7 +284,9 @@ dayModeSet(mode), energyCheckIn(level), presence(state: active|idle|locked|aslee
 | Untimed work | "I did it" → `unverified` session, excluded from estimator (D-12) |
 | Estimator sample size | No multiplier until ≥ `estimatorMinSamples` eligible sessions in the bucket |
 | Day boundary | All "today" logic uses `DayBoundary` + injected `Clock`; never `Calendar.startOfDay` |
-| Rollover gaps | Idempotent, keyed by `lastRolloverDay` (D-05) |
+| Rollover gaps | Idempotent, keyed by `lastRolloverDay` = latest `DayPlanModel.rolledOverAt`, saved in the same `save()` as the rollover changes (D-05) |
+| Settings compatibility | `PlannerSettings` decodes field-by-field with defaults; adding a field never discards saved settings (D-04) |
+| App state vs settings | Pin (D-08) on its own UserDefaults key; rollover marker in the main store (D-05); neither in `PlannerSettings` |
 | Event identity | Annotations keyed by external ID + occurrence start, not `eventIdentifier` (D-17) |
 | Calendar identity | Calendar modes keyed by `calendarIdentifier` with title fallback (D-09) |
 | Presence signals | Lock/unlock notifications are undocumented; idle API to be verified in the sandbox (D-24) |
@@ -295,7 +297,7 @@ dayModeSet(mode), energyCheckIn(level), presence(state: active|idle|locked|aslee
 
 | Research problem | Surface | Implementation |
 |------------------|---------|----------------|
-| Out of sight, out of mind | **Menu bar item**: current task + minutes left | Phase 0 spike decides `MenuBarExtra(.window)` vs `NSStatusItem` (D-25). Minute resolution in the bar. |
+| Out of sight, out of mind | **Menu bar item**: current task + time | Phase 0 spike decides `MenuBarExtra(.window)` vs `NSStatusItem` (D-25). Minute resolution in the bar. A session counts down to the check-in; otherwise the bar counts down to the next event (D-25). |
 | Frictionless capture | **Global hotkey → floating panel** | `NSPanel` subclass: `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, `canBecomeKey = true`. Title only; Enter → Inbox. |
 | Time blindness | **Floating focus timer**, now line, countdowns | `TimelineView`; seconds only in the timer/popover |
 | Hyperfocus | **Check-ins** during sessions | D-14 |
@@ -315,27 +317,35 @@ dayModeSet(mode), energyCheckIn(level), presence(state: active|idle|locked|aslee
 All functions are pure: `(snapshots, settings, clock) → result or [Change]`. The repository applies changes.
 
 ### 6.1 Rollover (D-05, D-06, D-20)
-Runs on launch, wake, and boundary; no-op if `lastRolloverDay == today`. From `previousActiveDay` → `today`, in order:
+Runs on launch, wake, the boundary timer, and time-zone/clock changes; no-op if `lastRolloverDay == today`. From `previousActiveDay` → `today`, in order:
 1. Open routine instances with `routineDay < today` → `dropped(.routineExpired)`.
 2. Tasks with `carriedFrom != nil` (untouched carried items) → `carriedFrom = nil`.
-3. Open tasks with `isTodayMust` → `isTodayMust = false`, `carriedFrom = previousActiveDay`, `rolloverCount += (previousMode == .pause ? 0 : 1)`.
+3. Open tasks with `isTodayMust` → `isTodayMust = false`, `carriedFrom = previousActiveDay`, `rolloverCount += (previousMode == .pause ? 0 : 1)` (no pause days before Phase 4a).
 4. Spawn today's routine instances from active templates.
-5. Emit `rolloverRan` with counts.
+5. Clear the pin (D-08).
+6. Mark today's `DayPlanModel.rolledOverAt` — same `save()` as steps 1–4.
+7. Emit `rolloverRan` with counts.
+
+The pure function returns `[Change]` plus `clearPin: Bool`; the repository applies the changes and the marker in one save, then the app clears the pin key. Afterwards the boundary timer is re-armed for the next `dayBoundaryHour`.
 
 ### 6.2 Today & Now
 - **Today** = musts (ordered) + today's routine instances + today's blocks + the "From yesterday" row. Cap from settings, adjusted by day energy (D-16) and mode (`minimum` → `isMinimum` tasks only).
-- **Now/Next** = D-08 rule.
+- **Inbox** = D-03 rule, which excludes carried tasks (`carriedFrom != nil`).
+- **Now/Next** = D-08 rule, with `pinnedTaskID` passed in as an input.
 
 ### 6.3 Calendar logic
 - **Busy intervals** = Busy-mode calendars, D-10 availability rule, all-day exclusion, plus `defaultBufferMinutes` / per-event travel around each (D-17).
-- **Free slots** = working window minus busy intervals minus existing blocks; snapped to `proposalSnapMinutes`.
-- **Tap-a-gap proposal** (D-11): gap + task → block sized `estimate × multiplier` (or 30 min), clipped to the gap.
+- **Free slots** = 5:00–21:00 minus busy intervals (buffer and travel included) minus unresolved blocks; snapped to `proposalSnapMinutes`. Dragging may leave the window (D-11).
+- **Tap-a-gap proposal** (D-11): gap + task → ghost block sized to the estimate, or 30 min, snapped to 15 and clipped to the gap. Saved only when accepted.
 - **Back-planning** (Phase 6): due date + estimate → proposed blocks in free slots, preferring energy windows. Proposals only.
 - **Missed blocks** (D-12): `end < now ∧ task.open ∧ no overlapping session ∧ resolution == nil`.
 
 ### 6.4 Sessions (D-14)
 - `nextCheckIn = start + (estimate × checkInMultiplier ?? checkInNoEstimateMinutes)`.
+- "Just 5 minutes" (D-27): first check-in at `start + fiveMinuteStartMinutes`; "Keep going" → D-14 schedule from then.
 - Unanswered for `checkInGraceMinutes` → end at check-in time, `autoEnded`.
+- Evaluated from timestamps on launch and wake as well as by timer, so sleep can't leave a session running.
+- Menu bar text is a pure function of (session, task, next check-in, next event, now) → label (D-25).
 
 ### 6.5 Recovery
 - **Fresh start** (D-15): returns changes + an undo snapshot; undo valid for 24 h.
@@ -365,7 +375,7 @@ Estimate error (median, trend) · carried-over rate · triage action mix · noti
 | Service | Responsibilities | Gotchas |
 |---------|------------------|---------|
 | `CalendarService` | Full-access request; calendars list; events for visible range → `EventSnapshot`; observe `.EKEventStoreChanged` (debounce ~500 ms, refetch visible range) | Read requires full access; sandbox entitlement + `NSCalendarsFullAccessUsageDescription`; never write in the change handler; denied → D-22 |
-| `NotificationService` | Register categories/actions; apply planner diff; route actions → repository + activity log | Time-sensitive needs its entitlement; the user can revoke it |
+| `NotificationService` | Register categories/actions; apply planner diff; route actions → repository + activity log. **Phase 2:** check-in category only (D-14), scheduled straight from the session's next check-in | Time-sensitive needs its entitlement; the user can revoke it |
 | `PresenceService` | `NSWorkspace` will-sleep/did-wake, screen lock/unlock (distributed notifications, undocumented), idle via `CGEventSource.secondsSinceLastEventType` | Verify the idle API in the sandbox; log transitions only |
 | `CueService` | Detect wake/unlock, Focus changes, event ends → fire if-then cues through the planner budget | Debounce wake (multiple notifications per wake) |
 | `IntelligenceService` | `breakdown`, `parseCapture`, `suggestEstimate` via Foundation Models `@Generable` | Check availability; narrow prompts; manual fallback (Phase 6) |
@@ -392,7 +402,8 @@ Estimate error (median, trend) · carried-over rate · triage action mix · noti
 
 **Use it daily from the end of Phase 2.** Reorder later phases based on the Review metrics.
 
-### Phase 0 — Spike (≤ 1 day, throwaway)
+### Phase 0 — Spike (≤ 1 day, throwaway; first day of Phase 2)
+Not run before Phase 1. It runs on Phase 2's first day; the menu bar and presence logger are not designed until its results are in D-25.
 - Menu bar label that updates every minute: `MenuBarExtra(.window)` first, `NSStatusItem` fallback (D-25).
 - Capture `NSPanel` over a full-screen app via global hotkey; accepts typing without activating the app.
 - Idle-time and lock/unlock signals readable from a sandboxed app (D-24).
@@ -408,18 +419,21 @@ Estimate error (median, trend) · carried-over rate · triage action mix · noti
 - **Done when:** today's events render with correct busy/visible/hidden behavior; the app is usable with access denied; `EFCore` tests are green.
 
 ### Phase 2 — Capture, Now, and a day that survives *(start daily use)*
-- Hotkey capture panel → Inbox (derived, D-03).
-- Today: musts with cap (D-07); Now/Next (D-08); first-step field; Start → focus timer → session.
-- Menu bar item with current task + minutes left.
-- **Rollover with "From yesterday" row** (D-05, D-06).
-- Check-ins / auto-end (D-14). Completion feedback (D-21).
-- Launch at login. Activity log + presence logging wired.
+Order: Phase 0 spike → foundations → `EFCore` logic + tests → UI.
+- **Foundations:** tolerant `PlannerSettings` decoding (D-04); repository on `mainContext` (D-01); schema v2 with `DayPlanModel.rolledOverAt` (D-05).
+- **Pure logic first, tested before any window:** rollover, Inbox, Today cap, Now/Next with pin, session check-ins (incl. 5 min), menu bar label.
+- Hotkey capture panel → Inbox (derived, D-03). Fixed ⌃⌥Space via Carbon `RegisterEventHotKey` (proven in the Phase 0 spike, no dependency). `KeyboardShortcuts` comes in when rebinding is needed; `HotkeyService` hides the swap.
+- Today: musts with cap (D-07); Now/Next with pin (D-08); first-step field; Start / **Just 5 minutes** (D-27) → focus timer → session.
+- **Rollover with "From yesterday" row** (D-05, D-06), boundary timer.
+- Check-ins / auto-end (D-14) via the minimal `NotificationService`. Completion feedback (D-21).
+- Menu bar item per D-25.
+- Launch at login. Activity log + presence logging wired (sleep/wake only if the spike says so).
 - **Done when:** a full week of use produces no stale Today and no Inbox you avoid.
 
 ### Phase 3 — Buckets, scheduling, routines
 - Buckets (optional at capture).
 - Tap-a-gap proposals + Day-column drag/resize (D-11); overlap rendering (D-13).
-- Missed-block prompt (D-12). Manual subtasks; "just 5 minutes".
+- Missed-block prompt (D-12). Manual subtasks.
 - Routines: templates + daily instances + expiry (D-20), no time cues yet.
 - Fresh start + undo (D-15). Someday view.
 - **Done when:** a day is planned by tapping gaps or dragging, and routines show up daily without piling up.
@@ -465,6 +479,8 @@ See D-26: reward pairing, themes, wind-down reminders, body doubling, accountabi
 | Risk | Mitigation |
 |------|------------|
 | Menu bar label doesn't update | Phase 0 spike; `NSStatusItem` fallback |
+| New settings field wipes saved settings | Tolerant decoder + Phase 1 JSON test (D-04) |
+| Check-in unseen during hyperfocus → real work auto-ended | Check-in notification from Phase 2 (D-14) |
 | Week view drag-and-drop effort | Split into 4b; tap-a-gap first; reuse the Day column |
 | Mapping boilerplate (D-01) | Generate mappers per model; tests per mapper |
 | EventKit change storms | Debounce; refetch the visible range only; never write in the handler |
@@ -494,15 +510,18 @@ See D-26: reward pairing, themes, wind-down reminders, body doubling, accountabi
 ## 12. Testing
 
 **`EFCore` unit tests** (fixed `Clock`), including:
-- Rollover: 3:59 vs 4:01 AM; DST forward/back; sleep across the boundary; a 9-day absence runs once; pause-day no increment; carried items clear after one day; routine instances expire and never carry
-- Now rule: each precedence step; ties; empty state
+- Rollover: 3:59 vs 4:01 AM; DST forward/back; sleep across the boundary; a 9-day absence runs once; pause-day no increment; carried items clear after one day; routine instances expire and never carry; pin cleared
+- Inbox: carried tasks excluded until `carriedFrom` clears
+- Now rule: each precedence step; pin outranked by a running session; stale pin ignored; ties; empty state
+- Menu bar label: each D-25 state; a running session counts down to the check-in, and past the check-in the label reads "check-in"
 - Calendar: all-day + availability matrix; Busy/Visible/Hidden; buffers/travel; proposal clipping; missed-block detection incl. unverified sessions
-- Sessions: check-in with and without an estimate; auto-end timing; estimator eligibility
+- Sessions: check-in with and without an estimate; 5-minute start; auto-end timing; sleep past the grace period; estimator eligibility
+- Settings: Phase 1 JSON (no new fields) decodes with calendar modes intact
 - Fresh start + undo round-trip; comeback threshold
 - Notifications: budget exhaustion by priority; minimum/low-energy filtering; quiet hours; escalation times; follow-up once; diff correctness
 - Energy mapping; Today cap override
 
-**`EFPersistence` tests:** mapper round-trips; migration v1 → v2 smoke test; activity store isolation (no CloudKit).
+**`EFPersistence` tests:** mapper round-trips; migration v1 → v2 smoke test; activity store isolation (no CloudKit); rollover changes and marker land in one save.
 
 **Manual checklist per phase:** permission flows (granted / denied / revoked), full-screen capture, sleep/wake behavior.
 

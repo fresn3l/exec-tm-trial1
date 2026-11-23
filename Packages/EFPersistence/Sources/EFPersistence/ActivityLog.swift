@@ -5,8 +5,10 @@ import SwiftData
 @MainActor
 public final class ActivityLog {
     private let context: ModelContext
+    private let container: ModelContainer   // keep alive for the context's lifetime
 
     public init(container: ModelContainer) {
+        self.container = container
         self.context = ModelContext(container)
     }
 
@@ -19,6 +21,16 @@ public final class ActivityLog {
         model.payload = event.payload.isEmpty ? nil : try JSONCoders.encode(event.payload)
         context.insert(model)
         try context.save()
+    }
+
+    public func latest(kind: ActivityKind) throws -> ActivityEvent? {
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<ActivityEventModel>(
+            predicate: #Predicate { $0.kindRaw == raw },
+            sortBy: [SortDescriptor(\.at, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first.map(decode)
     }
 
     public func events() throws -> [ActivityEvent] {

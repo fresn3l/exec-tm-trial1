@@ -1,36 +1,553 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Activity log" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity log" } } } },
-    "All day" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All day" } } } },
-    "Allow Calendar Access" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Calendar Access" } } } },
-    "Birthdays, holidays, and subscribed calendars start out Visible." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Birthdays, holidays, and subscribed calendars start out Visible." } } } },
-    "Blocks time" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Blocks time" } } } },
-    "Busy" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Busy" } } } },
-    "Busy calendars reserve time. Visible calendars stay on the day and leave time open. Hidden calendars stay off the day." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Busy calendars reserve time. Visible calendars stay on the day and leave time open. Hidden calendars stay off the day." } } } },
-    "Calendar access is off. The day still works without events." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendar access is off. The day still works without events." } } } },
-    "Calendar access is on." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendar access is on." } } } },
-    "Calendar access is restricted on this Mac." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendar access is restricted on this Mac." } } } },
-    "Calendar access is write-only. Full access is what shows events." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendar access is write-only. Full access is what shows events." } } } },
-    "Calendars" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendars" } } } },
-    "Checking calendar access" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking calendar access" } } } },
-    "Default" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Default" } } } },
-    "Doesn't reserve time" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Doesn't reserve time" } } } },
-    "Event" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Event" } } } },
-    "Export activity log" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export activity log" } } } },
-    "Hidden" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hidden" } } } },
-    "Next day" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next day" } } } },
-    "No calendars yet" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No calendars yet" } } } },
-    "Nothing on this day from the calendars you're showing." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing on this day from the calendars you're showing." } } } },
-    "Now" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Now" } } } },
-    "Open System Settings" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open System Settings" } } } },
-    "Previous day" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Previous day" } } } },
-    "Saved the activity log." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved the activity log." } } } },
-    "Solid reserves time. Dashed stays visible and leaves the time open." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid reserves time. Dashed stays visible and leaves the time open." } } } },
-    "The activity log didn't save." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The activity log didn't save." } } } },
-    "The local store didn't open." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The local store didn't open." } } } },
-    "Today" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Today" } } } },
-    "Visible" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Visible" } } } }
+    "%@ · %lldm" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$lldm"
+          }
+        }
+      }
+    },
+    "%@ · %lldm left" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$lldm left"
+          }
+        }
+      }
+    },
+    "%@ · +%lldm" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · +%2$lldm"
+          }
+        }
+      }
+    },
+    "%@ · next event in %lldm" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · next event in %2$lldm"
+          }
+        }
+      }
+    },
+    "%lld min" : {
+
+    },
+    "+%lld more" : {
+
+    },
+    "Activity log" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activity log"
+          }
+        }
+      }
+    },
+    "Add a task — just a title is enough" : {
+
+    },
+    "Add anyway" : {
+
+    },
+    "Add to Today" : {
+
+    },
+    "Added to Inbox" : {
+
+    },
+    "Adding “%@”. Fewer things on Today makes the next one easier to pick." : {
+
+    },
+    "All day" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All day"
+          }
+        }
+      }
+    },
+    "Allow Calendar Access" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Calendar Access"
+          }
+        }
+      }
+    },
+    "Anything you jot down with ⌃⌥Space lands here." : {
+
+    },
+    "Birthdays, holidays, and subscribed calendars start out Visible." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Birthdays, holidays, and subscribed calendars start out Visible."
+          }
+        }
+      }
+    },
+    "Blocks time" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blocks time"
+          }
+        }
+      }
+    },
+    "Busy" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Busy"
+          }
+        }
+      }
+    },
+    "Busy calendars reserve time. Visible calendars stay on the day and leave time open. Hidden calendars stay off the day." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Busy calendars reserve time. Visible calendars stay on the day and leave time open. Hidden calendars stay off the day."
+          }
+        }
+      }
+    },
+    "Calendar" : {
+
+    },
+    "Calendar access is off. The day still works without events." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar access is off. The day still works without events."
+          }
+        }
+      }
+    },
+    "Calendar access is on." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar access is on."
+          }
+        }
+      }
+    },
+    "Calendar access is restricted on this Mac." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar access is restricted on this Mac."
+          }
+        }
+      }
+    },
+    "Calendar access is write-only. Full access is what shows events." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar access is write-only. Full access is what shows events."
+          }
+        }
+      }
+    },
+    "Calendars" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendars"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+
+    },
+    "Checking calendar access" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking calendar access"
+          }
+        }
+      }
+    },
+    "Coming up" : {
+
+    },
+    "Default" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default"
+          }
+        }
+      }
+    },
+    "Doesn't reserve time" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doesn't reserve time"
+          }
+        }
+      }
+    },
+    "Done" : {
+
+    },
+    "Done: %@" : {
+
+    },
+    "Drop" : {
+
+    },
+    "Edit…" : {
+
+    },
+    "Estimate (minutes)" : {
+
+    },
+    "Event" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Event"
+          }
+        }
+      }
+    },
+    "ExecFn" : {
+
+    },
+    "Export activity log" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export activity log"
+          }
+        }
+      }
+    },
+    "First step" : {
+
+    },
+    "First step (optional) — e.g. open the file" : {
+
+    },
+    "Five minutes in. Keep going?" : {
+
+    },
+    "From yesterday" : {
+
+    },
+    "General" : {
+
+    },
+    "Hidden" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hidden"
+          }
+        }
+      }
+    },
+    "Inbox" : {
+
+    },
+    "Inbox is clear" : {
+
+    },
+    "Jot something down" : {
+
+    },
+    "Just 5 minutes" : {
+
+    },
+    "Keep all as Later" : {
+
+    },
+    "Keep going" : {
+
+    },
+    "Later" : {
+
+    },
+    "Make this Now" : {
+
+    },
+    "More" : {
+
+    },
+    "Move off Today" : {
+
+    },
+    "Move “%@” off Today" : {
+
+    },
+    "Next" : {
+
+    },
+    "Next day" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next day"
+          }
+        }
+      }
+    },
+    "Next event %@" : {
+
+    },
+    "Next: %@" : {
+
+    },
+    "No calendars yet" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No calendars yet"
+          }
+        }
+      }
+    },
+    "No session running" : {
+
+    },
+    "Nothing on Today yet. Add something from the Inbox when you're ready." : {
+
+    },
+    "Nothing on this day from the calendars you're showing." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing on this day from the calendars you're showing."
+          }
+        }
+      }
+    },
+    "Nothing waiting." : {
+
+    },
+    "Nothing waiting. Press ⌃⌥Space anywhere to jot something down." : {
+
+    },
+    "Now" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Now"
+          }
+        }
+      }
+    },
+    "Now (pinned)" : {
+
+    },
+    "Now (scheduled)" : {
+
+    },
+    "Open ExecFn" : {
+
+    },
+    "Open ExecFn at login" : {
+
+    },
+    "Open System Settings" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open System Settings"
+          }
+        }
+      }
+    },
+    "Optional" : {
+
+    },
+    "Optional — the very first physical action" : {
+
+    },
+    "Pick one" : {
+
+    },
+    "Pinned" : {
+
+    },
+    "Previous day" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous day"
+          }
+        }
+      }
+    },
+    "Save" : {
+
+    },
+    "Saved the activity log." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved the activity log."
+          }
+        }
+      }
+    },
+    "Show timer" : {
+
+    },
+    "Solid reserves time. Dashed stays visible and leaves the time open." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solid reserves time. Dashed stays visible and leaves the time open."
+          }
+        }
+      }
+    },
+    "Start" : {
+
+    },
+    "Still on this?" : {
+
+    },
+    "Stop" : {
+
+    },
+    "Stop here" : {
+
+    },
+    "Tasks didn't load. Your data is still on disk." : {
+
+    },
+    "That change didn't save. Try again." : {
+
+    },
+    "The activity log didn't save." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The activity log didn't save."
+          }
+        }
+      }
+    },
+    "The local store didn't open." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The local store didn't open."
+          }
+        }
+      }
+    },
+    "The new day didn't start cleanly. Try relaunching ExecFn." : {
+
+    },
+    "Title" : {
+
+    },
+    "Today" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Today"
+          }
+        }
+      }
+    },
+    "Today already has %lld. Swap one?" : {
+
+    },
+    "Unpin" : {
+
+    },
+    "Up to %lld is plenty." : {
+
+    },
+    "Visible" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visible"
+          }
+        }
+      }
+    },
+    "Waiting for approval in System Settings → General → Login Items." : {
+
+    },
+    "What's on your mind? Return adds it to the Inbox" : {
+
+    },
+    "Working on" : {
+
+    },
+    "Yes" : {
+
+    },
+    "macOS didn't accept that change. You can set it in System Settings → General → Login Items." : {
+
+    },
+    "of %lld min" : {
+
+    },
+    "⌃⌥Space" : {
+
+    },
+    "⌃⌥Space is taken by another app, so the capture shortcut is off." : {
+
+    }
   },
   "version" : "1.0"
 }

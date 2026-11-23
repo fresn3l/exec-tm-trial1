@@ -4,10 +4,170 @@ import SwiftData
 
 @MainActor
 public final class TaskRepository {
-    private let context: ModelContext
+    /// D-01: the app's one context. Views read the same objects through `@Query`.
+    public let context: ModelContext
+    /// A context doesn't keep its container alive; dropping the container while
+    /// the context is in use traps. The repository holds it for as long as it lives.
+    private let container: ModelContainer
 
-    public init(container: ModelContainer) {
-        self.context = ModelContext(container)
+    public init(context: ModelContext) {
+        self.context = context
+        self.container = context.container
+    }
+
+    /// Uses the container's main context, never a private one.
+    public convenience init(container: ModelContainer) {
+        self.init(context: container.mainContext)
+    }
+
+    // MARK: Bulk reads
+
+    public func allTasks() throws -> [TaskSnapshot] {
+        try context.fetch(FetchDescriptor<TaskModel>()).map(SnapshotMapper.task(from:))
+    }
+
+    /// Open tasks plus anything finished since `since` (for "done today").
+    public func workingSet(since: Date) throws -> [TaskSnapshot] {
+        let open = TaskStatus.open.rawValue
+        let cutoff = since
+        let descriptor = FetchDescriptor<TaskModel>(predicate: #Predicate {
+            $0.statusRaw == open || ($0.completedAt ?? cutoff) > cutoff
+        })
+        return try context.fetch(descriptor).map(SnapshotMapper.task(from:))
+    }
+
+    public func openSessions() throws -> [SessionSnapshot] {
+        let descriptor = FetchDescriptor<SessionModel>(predicate: #Predicate { $0.end == nil })
+        return try context.fetch(descriptor).map(SnapshotMapper.session(from:))
+    }
+
+    public func blocks(from start: Date, to end: Date) throws -> [BlockSnapshot] {
+        let s = start, e = end
+        let descriptor = FetchDescriptor<BlockModel>(predicate: #Predicate { $0.end > s && $0.start < e })
+        return try context.fetch(descriptor).map(SnapshotMapper.block(from:))
+    }
+
+    public func allBlocks() throws -> [BlockSnapshot] {
+        try context.fetch(FetchDescriptor<BlockModel>()).map(SnapshotMapper.block(from:))
+    }
+
+    public func allSessions() throws -> [SessionSnapshot] {
+        try context.fetch(FetchDescriptor<SessionModel>()).map(SnapshotMapper.session(from:))
+    }
+
+    public func allRoutines() throws -> [RoutineTemplate] {
+        try context.fetch(FetchDescriptor<RoutineModel>()).map { try SnapshotMapper.routine(from: $0) }
+    }
+
+    public func allBuckets() throws -> [BucketSnapshot] {
+        try context.fetch(FetchDescriptor<BucketModel>()).map(SnapshotMapper.bucket(from:))
+    }
+
+    public func allSubtasks() throws -> [SubtaskSnapshot] {
+        try context.fetch(FetchDescriptor<SubtaskModel>()).map(SnapshotMapper.subtask(from:))
+    }
+
+    public func allAnnotations() throws -> [EventAnnotation] {
+        try context.fetch(FetchDescriptor<EventAnnotationModel>()).map(SnapshotMapper.annotation(from:))
+    }
+
+    // MARK: Writes
+
+    /// Writes several snapshots in one save.
+    public func save(
+        tasks: [TaskSnapshot] = [],
+        sessions: [SessionSnapshot] = [],
+        blocks: [BlockSnapshot] = [],
+        subtasks: [SubtaskSnapshot] = [],
+        buckets: [BucketSnapshot] = [],
+        routines: [RoutineTemplate] = []
+    ) throws {
+        for task in tasks {
+            let model = try fetchTask(id: task.id) ?? insert(TaskModel())
+            try SnapshotMapper.apply(task, to: model)
+        }
+        for session in sessions {
+            let model = try fetchSession(id: session.id) ?? insert(SessionModel())
+            SnapshotMapper.apply(session, to: model)
+            model.task = try fetchTask(id: session.taskID)
+        }
+        for block in blocks {
+            let model = try fetchBlock(id: block.id) ?? insert(BlockModel())
+            SnapshotMapper.apply(block, to: model)
+            model.task = try fetchTask(id: block.taskID)
+        }
+        for subtask in subtasks {
+            let model = try fetchSubtask(id: subtask.id) ?? insert(SubtaskModel())
+            SnapshotMapper.apply(subtask, to: model)
+            model.task = try fetchTask(id: subtask.taskID)
+        }
+        for bucket in buckets {
+            let model = try fetchBucket(id: bucket.id) ?? insert(BucketModel())
+            SnapshotMapper.apply(bucket, to: model)
+        }
+        for routine in routines {
+            let model = try fetchRoutine(id: routine.id) ?? insert(RoutineModel())
+            try SnapshotMapper.apply(routine, to: model)
+        }
+        if !(tasks.isEmpty && sessions.isEmpty && blocks.isEmpty && subtasks.isEmpty && buckets.isEmpty && routines.isEmpty) {
+            try context.save()
+        }
+    }
+
+    // MARK: Rollover (D-05)
+
+    /// The latest plan day whose `rolledOverAt` is set.
+    public func lastRolloverDay() throws -> PlanDay? {
+        var descriptor = FetchDescriptor<DayPlanModel>(
+            predicate: #Predicate { $0.rolledOverAt != nil },
+            sortBy: [SortDescriptor(\.year, order: .reverse), SortDescriptor(\.month, order: .reverse), SortDescriptor(\.day, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first.map { PlanDay(year: $0.year, month: $0.month, day: $0.day) }
+    }
+
+    public func dayPlan(for day: PlanDay) throws -> DayPlanSnapshot? {
+        try fetchDayPlan(day).map(SnapshotMapper.dayPlan(from:))
+    }
+
+    /// Loads, runs `Rollover`, and writes the task changes and today's marker in **one** save,
+    /// so a crash can't leave changes without a marker (which would roll over twice).
+    @discardableResult
+    public func rollOverIfNeeded(today: PlanDay, now: Date) throws -> Rollover.Result? {
+        let last = try lastRolloverDay()
+        let previousMode = try last.flatMap(dayPlan(for:))?.mode ?? .ideal
+        let existing = try allTasks()
+        guard let result = Rollover.run(
+            tasks: existing,
+            routines: try allRoutines(),
+            lastRolloverDay: last,
+            previousDayMode: previousMode,
+            today: today,
+            now: now
+        ) else { return nil }
+        for task in result.changedTasks {
+            guard let model = try fetchTask(id: task.id) else { continue }
+            try SnapshotMapper.apply(task, to: model)
+        }
+        for task in result.spawnedTasks {
+            let model = try fetchTask(id: task.id) ?? insert(TaskModel())
+            try SnapshotMapper.apply(task, to: model)
+        }
+        for subtask in result.spawnedSubtasks {
+            let model = try fetchSubtask(id: subtask.id) ?? insert(SubtaskModel())
+            SnapshotMapper.apply(subtask, to: model)
+            model.task = try fetchTask(id: subtask.taskID)
+        }
+        let plan = try fetchDayPlan(today) ?? {
+            let m = insert(DayPlanModel())
+            m.year = today.year
+            m.month = today.month
+            m.day = today.day
+            return m
+        }()
+        plan.rolledOverAt = now
+        try context.save()
+        return result
     }
 
     public func upsert(_ snapshot: TaskSnapshot) throws {
@@ -74,8 +234,25 @@ public final class TaskRepository {
         return try context.fetch(FetchDescriptor<SessionModel>(predicate: #Predicate { $0.id == identifier })).first
     }
 
+    private func fetchDayPlan(_ day: PlanDay) throws -> DayPlanModel? {
+        let y = day.year, m = day.month, d = day.day
+        return try context.fetch(FetchDescriptor<DayPlanModel>(predicate: #Predicate {
+            $0.year == y && $0.month == m && $0.day == d
+        })).first
+    }
+
     private func fetchRoutine(id: UUID) throws -> RoutineModel? {
         let identifier = id
         return try context.fetch(FetchDescriptor<RoutineModel>(predicate: #Predicate { $0.id == identifier })).first
+    }
+
+    private func fetchSubtask(id: UUID) throws -> SubtaskModel? {
+        let identifier = id
+        return try context.fetch(FetchDescriptor<SubtaskModel>(predicate: #Predicate { $0.id == identifier })).first
+    }
+
+    private func fetchBucket(id: UUID) throws -> BucketModel? {
+        let identifier = id
+        return try context.fetch(FetchDescriptor<BucketModel>(predicate: #Predicate { $0.id == identifier })).first
     }
 }

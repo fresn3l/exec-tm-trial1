@@ -48,5 +48,20 @@ public struct DayBoundary: Hashable, Sendable {
         start(of: day.advanced(by: 1))
     }
 
+    /// A clock time on the plan day's civil date. 5:00 is inside the plan day when the boundary is 4:00.
+    public func clockTime(on day: PlanDay, minutesFromMidnight: Int) -> Date {
+        let minutes = max(0, minutesFromMidnight)
+        var parts = DateComponents()
+        parts.calendar = calendar
+        parts.timeZone = calendar.timeZone
+        parts.year = day.year
+        parts.month = day.month
+        parts.day = day.day
+        parts.hour = minutes / 60
+        parts.minute = minutes % 60
+        parts.second = 0
+        return calendar.date(from: parts) ?? start(of: day)
+    }
+
     private var dateFallback: Date { Date(timeIntervalSince1970: 0) }
 }

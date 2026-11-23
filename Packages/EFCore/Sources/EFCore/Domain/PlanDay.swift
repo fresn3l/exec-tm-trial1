@@ -38,4 +38,33 @@ public struct PlanDay: Hashable, Comparable, Codable, Sendable {
             day: next.day ?? day
         )
     }
+
+    /// Whole civil days from this date to `other`. Negative when `other` is earlier.
+    public func daysUntil(_ other: PlanDay) -> Int {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        func noon(_ day: PlanDay) -> Date? {
+            var parts = DateComponents()
+            parts.year = day.year
+            parts.month = day.month
+            parts.day = day.day
+            parts.hour = 12
+            return gregorian.date(from: parts)
+        }
+        guard let start = noon(self), let end = noon(other) else { return 0 }
+        return gregorian.dateComponents([.day], from: start, to: end).day ?? 0
+    }
+
+    /// Calendar weekday of the civil date. 1 = Sunday … 7 = Saturday.
+    public func weekday() -> Int {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        var parts = DateComponents()
+        parts.year = year
+        parts.month = month
+        parts.day = day
+        parts.hour = 12
+        let date = gregorian.date(from: parts) ?? .now
+        return gregorian.component(.weekday, from: date)
+    }
 }

@@ -56,10 +56,16 @@ public struct PlannerSettings: Hashable, Codable, Sendable {
     public var quietHours: QuietHours
     public var defaultBufferMinutes: Int
     public var proposalSnapMinutes: Int
+    /// Clock minutes from midnight. Proposals only search this range; dragging may leave it (D-11).
+    public var planningWindowStartMinutes: Int
+    public var planningWindowEndMinutes: Int
+    /// Block length when the task has no estimate (D-11).
+    public var defaultBlockMinutes: Int
     public var nowLookaheadMinutes: Int
     public var checkInMultiplier: Double
     public var checkInNoEstimateMinutes: Int
     public var checkInGraceMinutes: Int
+    public var fiveMinuteStartMinutes: Int
     public var comebackGapDays: Int
     public var somedayAfterDays: Int
     public var estimatorMinSamples: Int
@@ -76,10 +82,14 @@ public struct PlannerSettings: Hashable, Codable, Sendable {
         quietHours: QuietHours = QuietHours(),
         defaultBufferMinutes: Int = 10,
         proposalSnapMinutes: Int = 15,
+        planningWindowStartMinutes: Int = 5 * 60,
+        planningWindowEndMinutes: Int = 21 * 60,
+        defaultBlockMinutes: Int = 30,
         nowLookaheadMinutes: Int = 60,
         checkInMultiplier: Double = 1.5,
         checkInNoEstimateMinutes: Int = 45,
         checkInGraceMinutes: Int = 45,
+        fiveMinuteStartMinutes: Int = 5,
         comebackGapDays: Int = 3,
         somedayAfterDays: Int = 30,
         estimatorMinSamples: Int = 5,
@@ -95,10 +105,14 @@ public struct PlannerSettings: Hashable, Codable, Sendable {
         self.quietHours = quietHours
         self.defaultBufferMinutes = defaultBufferMinutes
         self.proposalSnapMinutes = proposalSnapMinutes
+        self.planningWindowStartMinutes = planningWindowStartMinutes
+        self.planningWindowEndMinutes = planningWindowEndMinutes
+        self.defaultBlockMinutes = defaultBlockMinutes
         self.nowLookaheadMinutes = nowLookaheadMinutes
         self.checkInMultiplier = checkInMultiplier
         self.checkInNoEstimateMinutes = checkInNoEstimateMinutes
         self.checkInGraceMinutes = checkInGraceMinutes
+        self.fiveMinuteStartMinutes = fiveMinuteStartMinutes
         self.comebackGapDays = comebackGapDays
         self.somedayAfterDays = somedayAfterDays
         self.estimatorMinSamples = estimatorMinSamples
@@ -110,4 +124,49 @@ public struct PlannerSettings: Hashable, Codable, Sendable {
     }
 
     public static let standard = PlannerSettings()
+}
+
+// D-04: decode field by field. A field missing from saved data keeps its default,
+// so adding a setting never discards the rest (e.g. calendar modes).
+extension PlannerSettings {
+    private enum CodingKeys: String, CodingKey {
+        case dayBoundaryHour, todayCap, notificationBudget, quietHours, defaultBufferMinutes
+        case proposalSnapMinutes, planningWindowStartMinutes, planningWindowEndMinutes, defaultBlockMinutes
+        case nowLookaheadMinutes, checkInMultiplier, checkInNoEstimateMinutes
+        case checkInGraceMinutes, fiveMinuteStartMinutes, comebackGapDays, somedayAfterDays
+        case estimatorMinSamples, estimatorWindow, estimatorClamp, idleThresholdMinutes
+        case calendarModes, energyWindows
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PlannerSettings.standard
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback
+        }
+        self.init(
+            dayBoundaryHour: value(.dayBoundaryHour, d.dayBoundaryHour),
+            todayCap: value(.todayCap, d.todayCap),
+            notificationBudget: value(.notificationBudget, d.notificationBudget),
+            quietHours: value(.quietHours, d.quietHours),
+            defaultBufferMinutes: value(.defaultBufferMinutes, d.defaultBufferMinutes),
+            proposalSnapMinutes: value(.proposalSnapMinutes, d.proposalSnapMinutes),
+            planningWindowStartMinutes: value(.planningWindowStartMinutes, d.planningWindowStartMinutes),
+            planningWindowEndMinutes: value(.planningWindowEndMinutes, d.planningWindowEndMinutes),
+            defaultBlockMinutes: value(.defaultBlockMinutes, d.defaultBlockMinutes),
+            nowLookaheadMinutes: value(.nowLookaheadMinutes, d.nowLookaheadMinutes),
+            checkInMultiplier: value(.checkInMultiplier, d.checkInMultiplier),
+            checkInNoEstimateMinutes: value(.checkInNoEstimateMinutes, d.checkInNoEstimateMinutes),
+            checkInGraceMinutes: value(.checkInGraceMinutes, d.checkInGraceMinutes),
+            fiveMinuteStartMinutes: value(.fiveMinuteStartMinutes, d.fiveMinuteStartMinutes),
+            comebackGapDays: value(.comebackGapDays, d.comebackGapDays),
+            somedayAfterDays: value(.somedayAfterDays, d.somedayAfterDays),
+            estimatorMinSamples: value(.estimatorMinSamples, d.estimatorMinSamples),
+            estimatorWindow: value(.estimatorWindow, d.estimatorWindow),
+            estimatorClamp: value(.estimatorClamp, d.estimatorClamp),
+            idleThresholdMinutes: value(.idleThresholdMinutes, d.idleThresholdMinutes),
+            calendarModes: value(.calendarModes, d.calendarModes),
+            energyWindows: value(.energyWindows, d.energyWindows)
+        )
+    }
 }
