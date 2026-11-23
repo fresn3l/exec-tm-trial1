@@ -67,32 +67,36 @@ struct SessionTests {
 }
 
 struct StatusLineTests {
-    @Test func estimateCountsDownThenShowsOver() {
+    let settings = PlannerSettings.standard
+
+    @Test func runningSessionCountsDownToTheCheckIn() {
         let t = Fx.task("Write", estimate: 25)
         let s = SessionRules.start(taskID: t.id, mode: .standard, now: Fx.t0)
-        let early = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextEventStart: nil, now: Fx.t0 + 30)
-        #expect(early.time == .remaining(25))
-        let lastSeconds = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextEventStart: nil, now: Fx.t0 + 24 * 60 + 59)
-        #expect(lastSeconds.time == .remaining(1))
-        let over = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextEventStart: nil, now: Fx.t0 + 37 * 60 + 10)
-        #expect(over.time == .over(12))
-        #expect(over.isSessionRunning)
+        let checkIn = SessionRules.nextCheckIn(s, estimateMinutes: t.estimateMinutes, settings: settings)
+        let early = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextCheckIn: checkIn, nextEventStart: nil, now: Fx.t0 + 30)
+        #expect(early.time == .untilCheckIn(37))
+        let lastMinute = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextCheckIn: checkIn, nextEventStart: nil, now: checkIn - 59)
+        #expect(lastMinute.time == .untilCheckIn(1))
+        let due = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextCheckIn: checkIn, nextEventStart: nil, now: checkIn)
+        #expect(due.time == .checkInDue)
+        #expect(due.isSessionRunning)
     }
 
-    @Test func noEstimateShowsElapsed() {
+    @Test func fiveMinuteSessionCountsDownFromFive() {
         let t = Fx.task("Write")
-        let s = SessionRules.start(taskID: t.id, mode: .standard, now: Fx.t0)
-        let l = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextEventStart: nil, now: Fx.t0 + 7 * 60 + 59)
-        #expect(l.time == .elapsed(7))
+        let s = SessionRules.start(taskID: t.id, mode: .fiveMinutes, now: Fx.t0)
+        let checkIn = SessionRules.nextCheckIn(s, estimateMinutes: nil, settings: settings)
+        let label = StatusLine.label(session: s, sessionTask: t, nowTask: t, nextCheckIn: checkIn, nextEventStart: nil, now: Fx.t0)
+        #expect(label.time == .untilCheckIn(5))
     }
 
     @Test func noSessionShowsNextEventOrJustTheTitle() {
         let t = Fx.task("Write")
-        let withEvent = StatusLine.label(session: nil, sessionTask: nil, nowTask: t, nextEventStart: Fx.t0 + 20 * 60, now: Fx.t0)
+        let withEvent = StatusLine.label(session: nil, sessionTask: nil, nowTask: t, nextCheckIn: nil, nextEventStart: Fx.t0 + 20 * 60, now: Fx.t0)
         #expect(withEvent == .init(taskTitle: "Write", time: .untilEvent(20), isSessionRunning: false))
-        let without = StatusLine.label(session: nil, sessionTask: nil, nowTask: t, nextEventStart: nil, now: Fx.t0)
+        let without = StatusLine.label(session: nil, sessionTask: nil, nowTask: t, nextCheckIn: nil, nextEventStart: nil, now: Fx.t0)
         #expect(without.time == nil)
-        let nothing = StatusLine.label(session: nil, sessionTask: nil, nowTask: nil, nextEventStart: nil, now: Fx.t0)
+        let nothing = StatusLine.label(session: nil, sessionTask: nil, nowTask: nil, nextCheckIn: nil, nextEventStart: nil, now: Fx.t0)
         #expect(nothing.taskTitle == nil)
     }
 

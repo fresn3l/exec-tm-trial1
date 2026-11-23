@@ -227,15 +227,14 @@ Default numbers are starting points, not research findings. Tune them with Activ
 **Status:** Accepted (2026-11-20)
 **Decision:** On the first day of Phase 2, before the menu bar or presence logger is designed, prototype a live-updating menu bar label. Try `MenuBarExtra` (`.window` style) with a minute-resolution label first; fall back to AppKit `NSStatusItem` if the label doesn't update reliably. Minutes in the bar; seconds only in the popover/timer. Same spike: the capture `NSPanel` with `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, and a subclass overriding `canBecomeKey` so it accepts typing over full-screen apps; and the D-24 presence signals from inside the sandbox. Results are recorded under **Phase 0 results** below. Capture, Now, and rollover don't depend on the spike and can be built either way.
 
-**What the menu bar shows** (minute resolution, never red):
+**What the menu bar shows** (minute resolution, never red). A running session counts down to its next check-in. With no session, the bar counts down to the next calendar event. The popover shows the session clock in seconds and the next event together.
 | State | Label | Popover |
 |-------|-------|---------|
-| Session running, task has an estimate | Task title · minutes left on the estimate; once past it, elapsed minutes (`+12m`), no colour change | Timer with seconds, next check-in, next event |
-| Session running, no estimate | Task title · elapsed minutes | Timer with seconds, next check-in, next event |
-| No session, Now task exists | Now task title · minutes until the next event (if calendar access and an event today) | Now / Next, next event |
-| No session, nothing in Now | App icon only | "Pick one" (D-08 step 6) |
-
-The check-in countdown is not shown in the bar: it is an internal mechanism, not something the user set.
+| Session running, check-in still ahead | Task title · minutes until the check-in | Elapsed timer in seconds, "check-in in Nm", next event |
+| Session running, check-in waiting for an answer | Task title · check-in | The prompt: Yes / Done / Stop, or Keep going / Stop here |
+| No session, Now task, an event still today | Now task · minutes until that event | Now / Next, next event |
+| No session, Now task, no event | Now task title | Now / Next |
+| Nothing in Now | App icon only | "Pick one" (D-08 step 6) |
 
 **Phase 0 results** (spike: `Spikes/MenuBarCountdown`, run `./build.sh` then `open Spike.app`; it's sandboxed, ad-hoc signed, and logs to `~/Library/Containers/com.execfn.spike/Data/Library/Application Support/spike.log`):
 - Menu bar label ticks with `MenuBarExtra(.window)`: **yes (2026-11-20, macOS 26)**. A label driven by a published counter updated in step with an `NSStatusItem` across app switches, with the popover closed. Still to check: it keeps ticking after the popover has been opened and closed. → using `MenuBarExtra` unless that fails.

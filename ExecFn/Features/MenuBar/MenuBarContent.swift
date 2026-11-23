@@ -19,9 +19,8 @@ struct MenuBarLabel: View {
         let short = title.count > 22 ? String(title.prefix(21)) + "…" : title
         guard let time else { return short }
         switch time {
-        case let .remaining(m): return String(localized: "\(short) · \(m)m left")
-        case let .over(m): return String(localized: "\(short) · +\(m)m")
-        case let .elapsed(m): return String(localized: "\(short) · \(m)m")
+        case let .untilCheckIn(m): return String(localized: "\(short) · \(m)m")
+        case .checkInDue: return String(localized: "\(short) · check-in")
         case let .untilEvent(m): return String(localized: "\(short) · next event in \(m)m")
         }
     }
@@ -46,8 +45,15 @@ struct MenuBarContent: View {
                 }
                 if let session = planner.openSession, session.taskID == task.id {
                     TimelineView(.periodic(from: session.start, by: 1)) { context in
-                        Text(timerText(session: session, now: context.date))
-                            .font(.system(size: 26, weight: .medium, design: .rounded).monospacedDigit())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(timerText(session: session, now: context.date))
+                                .font(.system(size: 26, weight: .medium, design: .rounded).monospacedDigit())
+                            if let minutes = planner.checkInMinutes(at: context.date) {
+                                Text("Check-in in \(minutes)m")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     if planner.isCheckInDue {
                         CheckInPrompt(planner: planner).controlSize(.small)

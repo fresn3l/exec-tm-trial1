@@ -93,9 +93,27 @@ final class PlannerModel {
             session: openSession,
             sessionTask: sessionTask,
             nowTask: task(nowResult.now?.taskID),
+            nextCheckIn: nextCheckIn,
             nextEventStart: nextEventStart,
             now: now
         )
+    }
+
+    /// When the next check-in prompt is due. Nil when no session is running.
+    var nextCheckIn: Date? {
+        switch sessionState {
+        case let .running(next): next
+        case let .checkInDue(checkIn, _): checkIn
+        default: nil
+        }
+    }
+
+    /// Minutes until the check-in, while the prompt is still ahead. Nil once it is due.
+    func checkInMinutes(at now: Date) -> Int? {
+        guard !isCheckInDue, let checkIn = nextCheckIn else { return nil }
+        let left = checkIn.timeIntervalSince(now)
+        guard left > 0 else { return nil }
+        return Int((left / 60).rounded(.up))
     }
 
     // MARK: Lifecycle

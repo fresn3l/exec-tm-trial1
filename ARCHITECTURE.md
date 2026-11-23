@@ -297,7 +297,7 @@ dayModeSet(mode), energyCheckIn(level), presence(state: active|idle|locked|aslee
 
 | Research problem | Surface | Implementation |
 |------------------|---------|----------------|
-| Out of sight, out of mind | **Menu bar item**: current task + time | Phase 0 spike decides `MenuBarExtra(.window)` vs `NSStatusItem` (D-25). Minute resolution in the bar. Label rule per state in D-25 (estimate left / elapsed / next event). |
+| Out of sight, out of mind | **Menu bar item**: current task + time | Phase 0 spike decides `MenuBarExtra(.window)` vs `NSStatusItem` (D-25). Minute resolution in the bar. A session counts down to the check-in; otherwise the bar counts down to the next event (D-25). |
 | Frictionless capture | **Global hotkey → floating panel** | `NSPanel` subclass: `.nonactivatingPanel`, `.floating`, `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`, `canBecomeKey = true`. Title only; Enter → Inbox. |
 | Time blindness | **Floating focus timer**, now line, countdowns | `TimelineView`; seconds only in the timer/popover |
 | Hyperfocus | **Check-ins** during sessions | D-14 |
@@ -345,7 +345,7 @@ The pure function returns `[Change]` plus `clearPin: Bool`; the repository appli
 - "Just 5 minutes" (D-27): first check-in at `start + fiveMinuteStartMinutes`; "Keep going" → D-14 schedule from then.
 - Unanswered for `checkInGraceMinutes` → end at check-in time, `autoEnded`.
 - Evaluated from timestamps on launch and wake as well as by timer, so sleep can't leave a session running.
-- Menu bar text is a pure function of (session, task, next event, now) → label (D-25).
+- Menu bar text is a pure function of (session, task, next check-in, next event, now) → label (D-25).
 
 ### 6.5 Recovery
 - **Fresh start** (D-15): returns changes + an undo snapshot; undo valid for 24 h.
@@ -513,7 +513,7 @@ See D-26: reward pairing, themes, wind-down reminders, body doubling, accountabi
 - Rollover: 3:59 vs 4:01 AM; DST forward/back; sleep across the boundary; a 9-day absence runs once; pause-day no increment; carried items clear after one day; routine instances expire and never carry; pin cleared
 - Inbox: carried tasks excluded until `carriedFrom` clears
 - Now rule: each precedence step; pin outranked by a running session; stale pin ignored; ties; empty state
-- Menu bar label: each D-25 state; past-estimate shows elapsed
+- Menu bar label: each D-25 state; a running session counts down to the check-in, and past the check-in the label reads "check-in"
 - Calendar: all-day + availability matrix; Busy/Visible/Hidden; buffers/travel; proposal clipping; missed-block detection incl. unverified sessions
 - Sessions: check-in with and without an estimate; 5-minute start; auto-end timing; sleep past the grace period; estimator eligibility
 - Settings: Phase 1 JSON (no new fields) decodes with calendar modes intact

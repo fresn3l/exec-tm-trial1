@@ -81,14 +81,13 @@ public enum SessionRules {
 }
 
 /// D-25: what the menu bar shows. Minute resolution. The app turns this into text.
+/// A running session counts down to the next check-in. With no session, it counts down to the next event.
 public enum StatusLine {
     public enum Time: Hashable, Sendable {
-        /// Minutes left on the estimate (rounded up, so it reads 1 until it's actually over).
-        case remaining(Int)
-        /// Past the estimate: elapsed beyond it. Shown neutrally (`+12m`), never red.
-        case over(Int)
-        /// Session without an estimate.
-        case elapsed(Int)
+        /// Minutes until the next check-in, rounded up so it reads 1 until the prompt is due.
+        case untilCheckIn(Int)
+        /// The check-in prompt is waiting for an answer.
+        case checkInDue
         /// No session: minutes until the next event today.
         case untilEvent(Int)
     }
@@ -99,24 +98,25 @@ public enum StatusLine {
         public var isSessionRunning: Bool
     }
 
+    /// - Parameter nextCheckIn: the session's next check-in, when one is running.
     /// - Parameter nextEventStart: start of the next timed event today, if calendar access allows.
     public static func label(
         session: SessionSnapshot?,
         sessionTask: TaskSnapshot?,
         nowTask: TaskSnapshot?,
+        nextCheckIn: Date?,
         nextEventStart: Date?,
         now: Date
     ) -> Label {
         if let session, session.isOpen, let task = sessionTask {
-            let elapsedSeconds = now.timeIntervalSince(session.start)
-            if let estimate = task.estimateMinutes, estimate > 0 {
-                let leftSeconds = TimeInterval(estimate * 60) - elapsedSeconds
-                let time: Time = leftSeconds > 0
-                    ? .remaining(Int((leftSeconds / 60).rounded(.up)))
-                    : .over(Int((-leftSeconds / 60).rounded(.down)))
-                return Label(taskTitle: task.title, time: time, isSessionRunning: true)
+            let time: Time?
+            if let nextCheckIn {
+                let left = nextCheckIn.timeIntervalSince(now)
+                time = left > 0 ? .untilCheckIn(Int((left / 60).rounded(.up))) : .checkInDue
+            } else {
+                time = nil
             }
-            return Label(taskTitle: task.title, time: .elapsed(max(0, Int(elapsedSeconds / 60))), isSessionRunning: true)
+            return Label(taskTitle: task.title, time: time, isSessionRunning: true)
         }
         guard let nowTask else { return Label(taskTitle: nil, time: nil, isSessionRunning: false) }
         let untilEvent = nextEventStart.flatMap { start -> Time? in
